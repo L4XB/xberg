@@ -26,7 +26,8 @@ use crate::ocr::preprocessing::should_invert_for_polarity;
 #[cfg(feature = "pdf")]
 use crate::ocr::table::post_process_table;
 use crate::ocr::table::{
-    extract_table_words_from_tsv, extract_words_from_tsv, reconstruct_table_with_columns, table_to_markdown,
+    drop_shading_marks, extract_table_words_from_tsv, extract_words_from_tsv, reconstruct_table_with_columns,
+    table_to_markdown,
 };
 #[cfg(test)]
 use crate::ocr::types::BatchItemResult;
@@ -2061,7 +2062,8 @@ pub(super) fn perform_ocr(
         let words = extract_table_words_from_tsv(tsv_data, config.table_min_confidence, &table_mark_symbols)?;
         let regions = cluster_words_into_table_regions(&words);
 
-        for (region_index, mut region_words) in regions.into_iter().enumerate() {
+        for (region_index, region_words) in regions.into_iter().enumerate() {
+            let mut region_words = drop_shading_marks(region_words, config.table_row_threshold_ratio);
             if region_words.len() < MIN_TABLE_CANDIDATE_WORDS {
                 tracing::debug!(
                     target: "xberg::ocr::tables",

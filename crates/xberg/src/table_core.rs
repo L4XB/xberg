@@ -106,12 +106,13 @@ pub(crate) fn detect_columns(words: &[HocrWord], column_threshold: u32) -> Vec<u
 /// always computed from the same statistic, rather than duplicating the
 /// sort-and-index in more than one place.
 pub(crate) fn median_word_height(words: &[HocrWord]) -> u32 {
-    if words.is_empty() {
-        return 0;
-    }
-    let mut heights: Vec<u32> = words.iter().map(|w| w.height).collect();
+    median_height(words.iter().map(|w| w.height).collect())
+}
+
+/// The median of `heights` (the upper one of an even count), or 0 when there are none.
+pub(crate) fn median_height(mut heights: Vec<u32>) -> u32 {
     heights.sort_unstable();
-    heights[heights.len() / 2]
+    heights.get(heights.len() / 2).copied().unwrap_or(0)
 }
 
 /// Detect row positions from word y-coordinates.
@@ -164,7 +165,7 @@ pub(crate) fn detect_rows(words: &[HocrWord], row_threshold_ratio: f64) -> Vec<u
 }
 
 /// Find which row a word belongs to based on its y-center.
-fn find_row_index(row_positions: &[u32], word: &HocrWord) -> Option<usize> {
+pub(crate) fn find_row_index(row_positions: &[u32], word: &HocrWord) -> Option<usize> {
     let y_center = word.y_center() as u32;
 
     row_positions

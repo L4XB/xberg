@@ -258,6 +258,27 @@ fn values_glued_by_the_shading_underscore_marks_fill_cells_of_their_own() {
     );
 }
 
+/// The edge of a shaded row also reads as a tall `=` or a thin dash of its own, at a low
+/// confidence, in the gap between two values, and the cell merge then joined both values into one
+/// cell (GH#1858). At PSM 3 one pair was glued that way: each value must now fill a cell of its own.
+#[test]
+fn values_glued_by_a_shading_mark_word_fill_cells_of_their_own() {
+    let table = first_table(3, false).expect("PSM 3 must produce a table");
+    let cells: Vec<String> = table
+        .cells
+        .iter()
+        .flatten()
+        .map(|cell| cell.trim().replace('.', ","))
+        .collect();
+    for value in ["22,636", "23,315"] {
+        assert!(
+            cells.iter().any(|cell| cell == value),
+            "PSM 3: {value} must fill a cell of its own: {:?}",
+            table.cells
+        );
+    }
+}
+
 /// No cell that holds a value keeps an underscore mark. The positive twin: a value the page
 /// prints in every column still reads whole.
 #[test]
