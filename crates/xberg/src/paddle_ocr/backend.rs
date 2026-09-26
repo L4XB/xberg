@@ -257,6 +257,17 @@ fn image_metadata(outcome: &RotationOutcome) -> AHashMap<Cow<'static, str>, serd
     additional
 }
 
+/// Parse a `paddle_ocr_config` override.
+///
+/// Configuration validation and every page both call this, so an invalid override
+/// fails before any page runs. ~keep
+pub(crate) fn parse_paddle_ocr_config(value: &serde_json::Value) -> Result<PaddleOcrConfig> {
+    serde_json::from_value(value.clone()).map_err(|e| crate::XbergError::Validation {
+        message: format!("Failed to deserialize paddle_ocr_config: {}", e),
+        source: None,
+    })
+}
+
 /// PaddleOCR backend using ONNX Runtime.
 ///
 /// Maintains a pool of OCR engines keyed by script family. Each family has its own
@@ -1344,12 +1355,7 @@ impl OcrBackend for PaddleOcrBackend {
         }
 
         let effective_config: Arc<PaddleOcrConfig> = if let Some(ref paddle_json) = config.paddle_ocr_config {
-            let overridden: PaddleOcrConfig =
-                serde_json::from_value(paddle_json.clone()).map_err(|e| crate::XbergError::Validation {
-                    message: format!("Failed to deserialize paddle_ocr_config: {}", e),
-                    source: None,
-                })?;
-            Arc::new(overridden)
+            Arc::new(parse_paddle_ocr_config(paddle_json)?)
         } else {
             Arc::clone(&self.config)
         };
