@@ -2151,7 +2151,6 @@ exclude_functions = [
   "list_reranker_presets",
   "parse_citations",
   "parse_footnote_definitions",
-  "pdf_page_count",
   "redact",
   "register_document_extractor",
   "register_builtin",
@@ -2312,7 +2311,6 @@ exclude_functions = [
   "list_reranker_presets",
   "parse_citations",
   "parse_footnote_definitions",
-  "pdf_page_count",
   "redact",
   "register_builtin",
   "render_pdf_page_to_png",
@@ -3109,7 +3107,6 @@ functions = [
   "extract_keywords",
   "extract_region_with_vlm",
   "extract_region_with_vlm_usage",
-  "pdf_page_count",
   "render_pdf_page_to_png",
   "redact",
   "summarize",
@@ -3517,6 +3514,22 @@ module = "xberg"
 async = false
 returns_result = false
 args = []
+
+[crates.e2e.calls.pdf_page_count]
+result_is_simple = true
+function = "pdf_page_count"
+module = "xberg"
+async = false
+returns_result = true
+args = [
+  { name = "pdf_bytes", field = "input.pdf_bytes", type = "bytes" },
+  { name = "password", field = "input.password", type = "string", optional = true },
+]
+
+[crates.e2e.calls.pdf_page_count.overrides.c]
+# ~keep The C export returns the page count as uintptr_t (usize), not the char* every other
+# simple-result call returns, so the C e2e recipe cannot infer the binding type from result_is_simple.
+raw_c_result_type = "uintptr_t"
 
 [crates.e2e.calls.extract_batch]
 function = "extract_batch"

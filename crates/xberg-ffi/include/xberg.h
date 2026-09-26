@@ -30283,6 +30283,25 @@ double xberg_max_sim_score(XBERGAlefHandle query, XBERGAlefHandle doc);
 int32_t xberg_ocr_backend_supports_language(const char *backend,
                                             const char *language);
 
+#if defined(XBERG_FEATURE_PDF)
+/**
+ * Count the pages in a PDF without rendering any of them.
+ *
+ * Opens the document and returns its page count from the PDF structure. No page
+ * is rasterized, so this is cheap relative to `render_pdf_page_to_png` â
+ * use it when you only need the count (e.g. to drive a render loop over the
+ * pages).
+ * \param pdf_bytes Raw PDF file bytes
+ * \param password Optional password for encrypted PDFs
+ * \note Returns `XbergError::Parsing` if the PDF cannot be opened,
+ * authenticated, or its page count read.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
+ */
+uintptr_t xberg_pdf_page_count(const uint8_t *pdf_bytes,
+                               uintptr_t pdf_bytes_len, const char *password);
+#endif
+
 #if defined(XBERG_FEATURE_MARKDOWN_FOOTNOTES)
 /**
  * Verify that an excerpt appears verbatim in source text.

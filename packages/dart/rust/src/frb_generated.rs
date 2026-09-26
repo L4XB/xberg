@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1277317953;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1686134821;
 
 // Section: executor
 
@@ -11626,6 +11626,36 @@ fn wire__crate__ocr_backend_supports_language_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::ocr_backend_supports_language(api_backend, api_language)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+#[cfg(feature = "pdf")]
+fn wire__crate__pdf_page_count_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "pdf_page_count",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_)
+            };
+            let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_pdf_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_password = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::pdf_page_count(api_pdf_bytes, api_password)?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -26304,24 +26334,26 @@ fn pde_ffi_dispatcher_primary_impl(
         ))]
         394 => wire__crate__max_sim_score_impl(port, ptr, rust_vec_len, data_len),
         395 => wire__crate__ocr_backend_supports_language_impl(port, ptr, rust_vec_len, data_len),
-        396 => wire__crate__register_document_extractor_impl(port, ptr, rust_vec_len, data_len),
-        397 => wire__crate__register_embedding_backend_impl(port, ptr, rust_vec_len, data_len),
-        398 => wire__crate__register_ocr_backend_impl(port, ptr, rust_vec_len, data_len),
-        399 => wire__crate__register_post_processor_impl(port, ptr, rust_vec_len, data_len),
-        400 => wire__crate__register_renderer_impl(port, ptr, rust_vec_len, data_len),
-        401 => wire__crate__register_reranker_backend_impl(port, ptr, rust_vec_len, data_len),
-        402 => wire__crate__register_tokenizer_backend_impl(port, ptr, rust_vec_len, data_len),
-        403 => wire__crate__register_validator_impl(port, ptr, rust_vec_len, data_len),
-        404 => wire__crate__unregister_document_extractor_impl(port, ptr, rust_vec_len, data_len),
-        405 => wire__crate__unregister_embedding_backend_impl(port, ptr, rust_vec_len, data_len),
-        406 => wire__crate__unregister_ocr_backend_impl(port, ptr, rust_vec_len, data_len),
-        407 => wire__crate__unregister_post_processor_impl(port, ptr, rust_vec_len, data_len),
-        408 => wire__crate__unregister_renderer_impl(port, ptr, rust_vec_len, data_len),
-        409 => wire__crate__unregister_reranker_backend_impl(port, ptr, rust_vec_len, data_len),
-        410 => wire__crate__unregister_tokenizer_backend_impl(port, ptr, rust_vec_len, data_len),
-        411 => wire__crate__unregister_validator_impl(port, ptr, rust_vec_len, data_len),
+        #[cfg(feature = "pdf")]
+        396 => wire__crate__pdf_page_count_impl(port, ptr, rust_vec_len, data_len),
+        397 => wire__crate__register_document_extractor_impl(port, ptr, rust_vec_len, data_len),
+        398 => wire__crate__register_embedding_backend_impl(port, ptr, rust_vec_len, data_len),
+        399 => wire__crate__register_ocr_backend_impl(port, ptr, rust_vec_len, data_len),
+        400 => wire__crate__register_post_processor_impl(port, ptr, rust_vec_len, data_len),
+        401 => wire__crate__register_renderer_impl(port, ptr, rust_vec_len, data_len),
+        402 => wire__crate__register_reranker_backend_impl(port, ptr, rust_vec_len, data_len),
+        403 => wire__crate__register_tokenizer_backend_impl(port, ptr, rust_vec_len, data_len),
+        404 => wire__crate__register_validator_impl(port, ptr, rust_vec_len, data_len),
+        405 => wire__crate__unregister_document_extractor_impl(port, ptr, rust_vec_len, data_len),
+        406 => wire__crate__unregister_embedding_backend_impl(port, ptr, rust_vec_len, data_len),
+        407 => wire__crate__unregister_ocr_backend_impl(port, ptr, rust_vec_len, data_len),
+        408 => wire__crate__unregister_post_processor_impl(port, ptr, rust_vec_len, data_len),
+        409 => wire__crate__unregister_renderer_impl(port, ptr, rust_vec_len, data_len),
+        410 => wire__crate__unregister_reranker_backend_impl(port, ptr, rust_vec_len, data_len),
+        411 => wire__crate__unregister_tokenizer_backend_impl(port, ptr, rust_vec_len, data_len),
+        412 => wire__crate__unregister_validator_impl(port, ptr, rust_vec_len, data_len),
         #[cfg(feature = "markdown-footnotes")]
-        412 => wire__crate__verify_excerpt_impl(port, ptr, rust_vec_len, data_len),
+        413 => wire__crate__verify_excerpt_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
