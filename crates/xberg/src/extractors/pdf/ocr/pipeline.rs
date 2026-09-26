@@ -60,7 +60,7 @@ use super::rendering::{
     page_dimensions_pt, page_needs_xobject_fallback, pre_rendered_page_geometry, pre_rendered_page_source_dpi,
     recover_page_text_from_image_xobjects, render_full_pdf_ocr_batch, render_selected_pages_from_document,
     share_rendered_page_images, valid_page_indices, validate_png_encode_pages_individually,
-    whole_page_raster_for_ocr_page, xobject_fallback_warning,
+    whole_page_raster_for_ocr_page,
 };
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 use super::scoring::{
@@ -2031,7 +2031,9 @@ pub(super) async fn extract_with_ocr_for_page(
             // Set when the embedded-image retry ran (attempted at least one image) but the
             // backend returned successfully with empty content on every one of them (#1673).
             let mut xobject_retry_ran_empty = false;
-            if page_needs_xobject_fallback(&ocr_result.content, encoded_batch[offset].1.as_slice(), security_limits) {
+            let xobject_trigger =
+                page_needs_xobject_fallback(&ocr_result.content, encoded_batch[offset].1.as_slice(), security_limits);
+            if xobject_trigger.needs_fallback {
                 // The layout-detection route hands in pre-rendered `images`, which leaves
                 // `lazy_pdf_render_state` unopened; that used to disable this fallback
                 // entirely for exactly the scanned documents most likely to need it. The
@@ -2061,9 +2063,9 @@ pub(super) async fn extract_with_ocr_for_page(
                         mut formulas,
                         image_preprocessing,
                     } = recovery;
-                    if !text.is_empty() {
+                    if should_adopt_xobject_retry_text(&ocr_result.content, &text) {
                         ocr_result.content = text;
-                    } else if attempted > 0 {
+                    } else if attempted > 0 && text.is_empty() {
                         xobject_retry_ran_empty = true;
                     }
                     accumulated_llm_usage.append(&mut llm_usage);
@@ -2075,7 +2077,11 @@ pub(super) async fn extract_with_ocr_for_page(
                     if capture_rasters {
                         captured_rasters.extend(images);
                     }
-                    image_fallback_warnings.push(xobject_fallback_warning(document_page_idx, attempted));
+                    image_fallback_warnings.push(xobject_fallback_warning(
+                        document_page_idx,
+                        attempted,
+                        xobject_trigger.draw_failed,
+                    ));
                 }
             }
 
@@ -3099,6 +3105,52 @@ pub(super) fn attach_ocr_fallback_warnings(
 
     doc
 }
+/// The warning that makes an image-XObject recovery visible in the output.
+///
+/// `draw_failed` comes from the same [`XObjectFallbackTrigger`] that gated the retry. The retry
+/// runs both when the rasterizer produced a blank page and when a perfectly-drawn page simply
+/// yielded no OCR text, and only the first is a rasterizer failure -- reporting the second with
+/// that wording sends a reader looking for a drawing bug that did not happen (GH#1826).
+///
+/// [`XObjectFallbackTrigger`]: super::rendering::XObjectFallbackTrigger
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+pub(super) fn xobject_fallback_warning(
+    page_idx: usize,
+    attempted: usize,
+    draw_failed: bool,
+) -> crate::types::ProcessingWarning {
+    let message = if draw_failed {
+        format!(
+            "Page {} rendered blank but contains {} image XObject(s) the PDF rasterizer \
+             could not draw; OCR was retried on the embedded image bytes.",
+            page_idx + 1,
+            attempted
+        )
+    } else {
+        format!(
+            "Page {} contains {} image XObject(s) but OCR returned no usable text; \
+             OCR was retried on the embedded image bytes.",
+            page_idx + 1,
+            attempted
+        )
+    };
+    crate::types::ProcessingWarning {
+        source: std::borrow::Cow::Borrowed("ocr"),
+        message: std::borrow::Cow::Owned(message),
+    }
+}
+
+/// Whether the image-XObject retry's text should replace the page's own OCR text.
+///
+/// The retry fires for a page carrying up to `MAX_INK_PROBE_TEXT_CHARS` of real text, so adopting
+/// on non-emptiness alone let a single character of noise overwrite text the page OCR had already
+/// read correctly (GH#1826). Compare what each attempt actually read instead.
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+pub(super) fn should_adopt_xobject_retry_text(original: &str, retry: &str) -> bool {
+    let non_whitespace = |text: &str| text.chars().filter(|c| !c.is_whitespace()).count();
+    !retry.is_empty() && non_whitespace(retry) > non_whitespace(original)
+}
+
 /// Last-resort image-XObject recovery for the OCR *pipeline* route, used when every stage
 /// failed outright (#1444).
 ///
@@ -3164,7 +3216,10 @@ pub(super) async fn collect_pipeline_xobject_pages(
         if recovered_payload {
             outcome
                 .warnings
-                .push(xobject_fallback_warning(page_idx, recovery.attempted));
+                // ~keep This last-resort route runs after every OCR stage failed outright, so no
+                // page raster exists to test: pass `true` to keep the pre-GH#1826 wording rather
+                // than fabricate a signal that was never measured.
+                .push(xobject_fallback_warning(page_idx, recovery.attempted, true));
         }
         outcome.llm_usage.append(&mut recovery.llm_usage);
         outcome.tables.append(&mut recovery.tables);

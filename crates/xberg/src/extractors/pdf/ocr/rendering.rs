@@ -533,16 +533,35 @@ pub(super) fn page_raster_is_blank(
 ///
 /// [`is_page_text_blank`]: crate::extraction::blank_detection::is_page_text_blank
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+pub(super) struct XObjectFallbackTrigger {
+    pub(super) needs_fallback: bool,
+    /// Whether the page raster itself came back blank -- the only evidence that the rasterizer
+    /// could not draw the page's images. Reported separately because the retry also runs when a
+    /// perfectly-drawn page simply yields no OCR text, and the warning must not claim a draw
+    /// failure then (GH#1826). ~keep
+    pub(super) draw_failed: bool,
+}
+
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 pub(super) fn page_needs_xobject_fallback(
     ocr_text: &str,
     page_png: &[u8],
     security_limits: &crate::extractors::security::SecurityLimits,
-) -> bool {
-    if crate::extraction::blank_detection::is_page_text_blank(ocr_text) {
-        return true;
-    }
+) -> XObjectFallbackTrigger {
+    let text_blank = crate::extraction::blank_detection::is_page_text_blank(ocr_text);
     let non_whitespace = ocr_text.chars().filter(|c| !c.is_whitespace()).count();
-    non_whitespace <= MAX_INK_PROBE_TEXT_CHARS && page_raster_is_blank(page_png, security_limits)
+    if !text_blank && non_whitespace > MAX_INK_PROBE_TEXT_CHARS {
+        return XObjectFallbackTrigger {
+            needs_fallback: false,
+            draw_failed: false,
+        };
+    }
+    let draw_failed = page_raster_is_blank(page_png, security_limits);
+    XObjectFallbackTrigger {
+        needs_fallback: text_blank || draw_failed,
+        draw_failed,
+    }
 }
 /// What one page's image-XObject OCR recovery attempt produced.
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
@@ -709,19 +728,6 @@ pub(super) async fn recover_page_text_from_image_xobjects(
     recover_image_xobjects(backend, &fallback_images, page_idx, ocr_config, budget)
         .await
         .map(Some)
-}
-/// The warning that makes an image-XObject recovery visible in the output.
-#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
-pub(super) fn xobject_fallback_warning(page_idx: usize, attempted: usize) -> crate::types::ProcessingWarning {
-    crate::types::ProcessingWarning {
-        source: std::borrow::Cow::Borrowed("ocr"),
-        message: std::borrow::Cow::Owned(format!(
-            "Page {} rendered blank but contains {} image XObject(s) the PDF rasterizer \
-             could not draw; OCR was retried on the embedded image bytes.",
-            page_idx + 1,
-            attempted
-        )),
-    }
 }
 /// Lazily open — at most once — a PDF document used *only* by the image-XObject OCR
 /// fallback.

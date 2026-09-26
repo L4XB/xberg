@@ -5104,8 +5104,12 @@ mod tests {
         assert_eq!(warnings[0].source.as_ref(), "ocr");
         assert_eq!(
             warnings[0].message.as_ref(),
-            "Page 1 rendered blank but contains 1 image XObject(s) the PDF rasterizer could not draw; \
-             OCR was retried on the embedded image bytes."
+            // GH#1826: these fixtures' pages rasterize perfectly -- the embedded image draws, and
+            // only the stub backend's OCR output is empty. The old wording blamed the rasterizer
+            // for every retry, so both of these tests encoded the misleading message the issue
+            // reports rather than the cause that was measured. ~keep
+            "Page 1 contains 1 image XObject(s) but OCR returned no usable text; OCR was retried \
+             on the embedded image bytes."
         );
     }
 
@@ -5314,8 +5318,12 @@ mod tests {
         assert_eq!(warnings[0].source.as_ref(), "ocr");
         assert_eq!(
             warnings[0].message.as_ref(),
-            "Page 1 rendered blank but contains 1 image XObject(s) the PDF rasterizer could not draw; \
-             OCR was retried on the embedded image bytes."
+            // GH#1826: these fixtures' pages rasterize perfectly -- the embedded image draws, and
+            // only the stub backend's OCR output is empty. The old wording blamed the rasterizer
+            // for every retry, so both of these tests encoded the misleading message the issue
+            // reports rather than the cause that was measured. ~keep
+            "Page 1 contains 1 image XObject(s) but OCR returned no usable text; OCR was retried \
+             on the embedded image bytes."
         );
     }
 
@@ -9651,15 +9659,57 @@ Name: ___
 
         // A short answer over an inked raster is a real (if terse) transcription and must
         // not be escalated; over a blank one it is a description of blankness.
-        assert!(!page_needs_xobject_fallback(
-            "Invoice 4471",
-            &encode_png(&inked),
-            &limits
-        ));
-        assert!(page_needs_xobject_fallback(
-            "The image is entirely blank.",
-            &encode_png(&white),
-            &limits,
+        assert!(!page_needs_xobject_fallback("Invoice 4471", &encode_png(&inked), &limits).needs_fallback);
+        assert!(
+            page_needs_xobject_fallback("The image is entirely blank.", &encode_png(&white), &limits).needs_fallback
+        );
+
+        // GH#1826: the retry also fires for a page whose raster drew perfectly but whose OCR
+        // read nothing, and the warning must not blame the rasterizer then. The trigger
+        // reports the raster verdict separately so the two cases can be told apart.
+        let blank_text_over_a_drawn_page = page_needs_xobject_fallback("", &encode_png(&inked), &limits);
+        assert!(
+            blank_text_over_a_drawn_page.needs_fallback,
+            "blank OCR text must still escalate to the embedded-image retry"
+        );
+        assert!(
+            !blank_text_over_a_drawn_page.draw_failed,
+            "the raster carries ink, so the rasterizer did draw this page's images"
+        );
+        assert!(
+            page_needs_xobject_fallback("", &encode_png(&white), &limits).draw_failed,
+            "an all-white raster is a genuine draw failure"
+        );
+    }
+
+    /// GH#1826: the warning must name the cause the trigger actually measured.
+    #[cfg(all(feature = "pdf", any(feature = "ocr", feature = "ocr-pipeline")))]
+    #[test]
+    fn xobject_fallback_warning_blames_the_rasterizer_only_when_the_raster_was_blank() {
+        assert_eq!(
+            xobject_fallback_warning(0, 2, false).message.as_ref(),
+            "Page 1 contains 2 image XObject(s) but OCR returned no usable text; OCR was retried \
+             on the embedded image bytes."
+        );
+        assert_eq!(
+            xobject_fallback_warning(0, 2, true).message.as_ref(),
+            "Page 1 rendered blank but contains 2 image XObject(s) the PDF rasterizer could not \
+             draw; OCR was retried on the embedded image bytes."
+        );
+    }
+
+    /// GH#1826: the retry fires for a page carrying up to `MAX_INK_PROBE_TEXT_CHARS` of real
+    /// text, so adopting its output on non-emptiness alone let one character of noise overwrite
+    /// text the page OCR had already read.
+    #[cfg(all(feature = "pdf", any(feature = "ocr", feature = "ocr-pipeline")))]
+    #[test]
+    fn xobject_retry_text_is_adopted_only_when_it_reads_more_than_the_page_did() {
+        assert!(!should_adopt_xobject_retry_text("Invoice 4471 total due", ""));
+        assert!(!should_adopt_xobject_retry_text("Invoice 4471 total due", "x"));
+        assert!(should_adopt_xobject_retry_text("", "Invoice 4471 total due"));
+        assert!(should_adopt_xobject_retry_text(
+            "Inv 447",
+            "Invoice 4471 total due $500"
         ));
     }
 
