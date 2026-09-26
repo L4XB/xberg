@@ -530,8 +530,8 @@ mod tests {
     ///
     /// Uses a real (non-mocked) `TesseractAPI`. `init("", "eng")` relies on Tesseract's
     /// own compiled-in default tessdata location rather than the crate's resolver
-    /// (`resolve_tessdata_path`, which real jobs and `query_available_languages` both
-    /// use), so it gracefully skips instead of asserting when that default has no
+    /// (`resolve_tessdata_path_in`, which real jobs and `query_available_languages` both
+    /// reach), so it gracefully skips instead of asserting when that default has no
     /// "eng" data in this environment.
     ///
     /// Before the fix, `apply_tesseract_variables` never called

@@ -2467,7 +2467,6 @@ mod tests {
     use crate::ocr::hocr_parser::{
         HOCR_FONT_SIZE_ATTRIBUTE, parse_hocr_to_internal_document_with_page_offset_and_stats,
     };
-    use serial_test::serial;
     use tempfile::tempdir;
 
     #[cfg(feature = "bundle-tessdata-eng")]
@@ -3395,14 +3394,7 @@ mod tests {
     /// `use_cache: false` call) that has no equivalent before this change, so there is
     /// nothing "unfixed" to run it against — the bypass plumbing this proves either exists
     /// or the test cannot be written.
-    // `#[serial]`: this test resolves tessdata through the default (no-override) path, which
-    // reads the process-global `XBERG_CACHE_DIR`/`TESSDATA_PREFIX` env vars that
-    // `tesseract_backend::tests` mutates with `std::env::set_var` under its own `#[serial]`
-    // tests. Joining the same lock group prevents this test from resolving a directory that
-    // mutation is deleting mid-scan (an uncaught C++ `filesystem_error` aborting the whole
-    // test process, not a logic bug in the code under test). ~keep
     #[test]
-    #[serial]
     fn process_image_with_cache_does_not_read_or_write_the_cache_when_use_cache_is_false() {
         let api = match xberg_tesseract::TesseractAPI::new() {
             Ok(api) => api,
@@ -3463,16 +3455,8 @@ mod tests {
     /// into a fresh temp directory, so tests can build two DIFFERENT resolved tessdata
     /// directories that both OCR successfully, without depending on any specific host path.
     /// Returns `None` when no Tesseract/tessdata is available in this environment.
-    /// Deliberately does NOT go through `resolve_tessdata_path(_, None)`: that resolution
-    /// reads the process-global `XBERG_CACHE_DIR`/`TESSDATA_PREFIX` env vars, which other
-    /// tests in this binary (`ocr::tesseract_backend::tests`) mutate with `std::env::set_var`
-    /// while running concurrently. A test that raced that mutation could resolve a directory
-    /// another thread deletes mid-scan, crashing the whole process with an uncaught C++
-    /// `filesystem_error` out of Tesseract's own `GetAvailableLanguagesAsVector` — not a
-    /// logic bug in the code under test, just an unsafe shared-state race. Sourcing real
-    /// `eng.traineddata` bytes from the sibling `xberg-tesseract` build's own `OUT_DIR`
-    /// instead (mirroring `tesseract_backend::tests::real_eng_traineddata_bytes_from_sibling_build_dir`)
-    /// avoids touching that shared state at all.
+    /// Sources real `eng.traineddata` bytes from the sibling `xberg-tesseract` build's own
+    /// `OUT_DIR`, mirroring `tesseract_backend::tests::real_eng_traineddata_bytes_from_sibling_build_dir`.
     fn real_eng_traineddata_bytes_from_sibling_build_dir() -> Option<Vec<u8>> {
         let this_out_dir = std::path::PathBuf::from(env!("OUT_DIR"));
         let build_dir = this_out_dir.parent()?.parent()?;
