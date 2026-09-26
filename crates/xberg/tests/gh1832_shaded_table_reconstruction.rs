@@ -229,10 +229,28 @@ fn enough_ground_truth_values_land_in_the_right_cell() {
     );
 }
 
+/// The edge of a shaded row reads as runs of underscores fused onto the values beside it, and
+/// such a fused word's box used to close the gap between two columns and join two values into
+/// one cell (GH#1833). The marks are cut out of each word before reconstruction, so no cell
+/// keeps one. The positive twin: a value the page prints in every column still reads whole.
+#[test]
+fn no_cell_keeps_the_shading_underscore_marks() {
+    for psm in [3, 11] {
+        let table = first_table(psm, false).unwrap_or_else(|| panic!("PSM {psm} must produce a table"));
+        let marked: Vec<&String> = table.cells.iter().flatten().filter(|cell| cell.contains('_')).collect();
+        assert!(marked.is_empty(), "PSM {psm}: cells keep underscore marks: {marked:?}");
+        assert!(
+            table.cells.iter().flatten().any(|cell| cell.trim() == "3,250"),
+            "PSM {psm}: a plainly printed value must still read whole"
+        );
+    }
+}
+
 /// Measurement harness for the rest of the cluster -- GH#1832 (a two-word header splits into two
 /// columns), GH#1833 (values glue across the shading's underscore marks) and GH#1834 (a label's
-/// tail becomes its own row). None of those is fixed; this prints the full grid and the per-cell
-/// misses at four configurations so a change to them can be scored against ground truth.
+/// tail becomes its own row). GH#1832 and GH#1834 are not fixed, and GH#1833's underscore marks
+/// are gated above; this prints the full grid and the per-cell misses at four configurations so a
+/// change to them can be scored against ground truth.
 /// Ignored because it is a report, not a gate.
 #[test]
 #[ignore = "measurement report for GH#1832/1833/1834; run with --ignored --nocapture"]

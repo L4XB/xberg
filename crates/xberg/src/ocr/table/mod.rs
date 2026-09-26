@@ -8,4 +8,4 @@ pub(crate) use crate::table_core::{reconstruct_table_with_columns, table_to_mark
 #[cfg(feature = "pdf")]
 pub(crate) use crate::pdf::table_reconstruct::post_process_table;
 
-pub(crate) use tsv_parser::extract_words_from_tsv;
+pub(crate) use tsv_parser::{extract_table_words_from_tsv, extract_words_from_tsv};

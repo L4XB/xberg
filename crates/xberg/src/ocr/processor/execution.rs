@@ -25,7 +25,9 @@ use crate::ocr::preprocessing::preprocess_pix;
 use crate::ocr::preprocessing::should_invert_for_polarity;
 #[cfg(feature = "pdf")]
 use crate::ocr::table::post_process_table;
-use crate::ocr::table::{extract_words_from_tsv, reconstruct_table_with_columns, table_to_markdown};
+use crate::ocr::table::{
+    extract_table_words_from_tsv, extract_words_from_tsv, reconstruct_table_with_columns, table_to_markdown,
+};
 #[cfg(test)]
 use crate::ocr::types::BatchItemResult;
 use crate::ocr::types::TesseractConfig;
@@ -2032,7 +2034,7 @@ pub(super) fn perform_ocr(
     if config.enable_table_detection {
         let tsv_data = tsv_data_for_tables.as_ref().unwrap();
 
-        let words = extract_words_from_tsv(tsv_data, config.table_min_confidence)?;
+        let words = extract_table_words_from_tsv(tsv_data, config.table_min_confidence)?;
         let regions = cluster_words_into_table_regions(&words);
 
         for (region_index, mut region_words) in regions.into_iter().enumerate() {
