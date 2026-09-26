@@ -88,7 +88,7 @@ pub(crate) fn extract_table_words_from_tsv(
     tsv_data: &str,
     min_confidence: f64,
     symbols: &[WordSymbols],
-) -> Result<Vec<HocrWord>, OcrError> {
+) -> Result<TableWords, OcrError> {
     let words = words_on_lines(tsv_data, min_confidence);
     let mut table_words = Vec::with_capacity(words.len());
     let mut lines = Vec::with_capacity(words.len());
@@ -96,8 +96,25 @@ pub(crate) fn extract_table_words_from_tsv(
         push_without_underscore_marks(word, symbols, &mut table_words);
         lines.resize(table_words.len(), line);
     }
+    let read_boxes = table_words.clone();
     put_line_words_on_one_band(&mut table_words, &lines);
-    Ok(table_words)
+    Ok(TableWords {
+        words: table_words,
+        read_boxes,
+    })
+}
+
+/// The words of [`extract_table_words_from_tsv`], with the box Tesseract read for each one.
+#[derive(Debug)]
+pub(crate) struct TableWords {
+    /// The words rows and columns are built from. Every word on one Tesseract text line has the
+    /// vertical box of that line.
+    pub(crate) words: Vec<HocrWord>,
+    /// The box Tesseract read for the word at the same index of `words`. The table bounding box
+    /// comes from these boxes because the text outside the table is picked by the centres of the
+    /// same boxes: a stretched edge-row word whose box `words` moved would otherwise fall outside
+    /// its own table and print twice (xberg-io/xberg#1834). ~keep
+    pub(crate) read_boxes: Vec<HocrWord>,
 }
 
 /// Give every word on one Tesseract text line the vertical box of the line's word whose height
@@ -253,6 +270,7 @@ mod tests {
     fn table_words_with_symbols(tsv_rows: &str, symbols: &[WordSymbols]) -> Vec<(String, u32, u32)> {
         extract_table_words_from_tsv(&format!("{TSV_HEADER}{tsv_rows}"), 0.0, symbols)
             .unwrap()
+            .words
             .into_iter()
             .map(|word| (word.text, word.left, word.width))
             .collect()
@@ -433,7 +451,7 @@ mod tests {
 5\t1\t0\t0\t1\t0\t100\t160\t80\t30\t60\t6,867\n\
 5\t1\t0\t0\t1\t1\t184\t160\t240\t30\t8\t_____7,073__\n"
         );
-        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap();
+        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap().words;
         let table = crate::table_core::reconstruct_table(&words, 20, 0.5);
         assert!(
             table.iter().flatten().all(|cell| !cell.contains('_')),
@@ -463,7 +481,7 @@ mod tests {
 5\t1\t8\t1\t1\t1\t600\t230\t60\t26\t90\t50\n\
 5\t1\t9\t1\t1\t1\t800\t230\t60\t26\t90\t60\n"
         );
-        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap();
+        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap().words;
         crate::table_core::reconstruct_table(&words, 20, 0.5)
     }
 
@@ -513,6 +531,7 @@ mod tests {
         );
         let boxes: Vec<(u32, u32)> = extract_table_words_from_tsv(&tsv, 0.0, &[])
             .unwrap()
+            .words
             .iter()
             .map(|word| (word.top, word.height))
             .collect();

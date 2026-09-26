@@ -802,30 +802,43 @@ pub(crate) const MIN_TABLE_CANDIDATE_WORDS: usize = 6;
 /// a new region. Each region is reconstructed independently, giving each
 /// table its own bounding box.
 ///
-// Same reasoning as `TABLE_REGION_GAP_HEIGHT_MULTIPLIER` above: the two real callers --
-// `ocr::processor::execution::perform_ocr`'s table-detection branch (gated `feature = "ocr"`)
-// and `PaddleOcrBackend::build_ocr_tables_from_words` (gated `paddle_ocr`) -- never need the
-// wider `pdf` gate this module carries. ~keep
-#[cfg(any(feature = "ocr", paddle_ocr))]
+// Same reasoning as `TABLE_REGION_GAP_HEIGHT_MULTIPLIER` above: the one real caller,
+// `PaddleOcrBackend::build_ocr_tables_from_words` (gated `paddle_ocr`), never needs the wider
+// `pdf` gate this module carries. The Tesseract table branch calls
+// [`cluster_word_indices_into_table_regions`] instead. ~keep
+#[cfg(any(paddle_ocr, all(test, feature = "ocr")))]
 pub(crate) fn cluster_words_into_table_regions(words: &[HocrWord]) -> Vec<Vec<HocrWord>> {
+    cluster_word_indices_into_table_regions(words)
+        .into_iter()
+        .map(|region| region.into_iter().map(|index| words[index].clone()).collect())
+        .collect()
+}
+
+/// Split table-candidate words into vertically separated regions, each given as indices into
+/// `words`. The rule is the one `cluster_words_into_table_regions` documents.
+// Called by `ocr::processor::execution::perform_ocr`'s table-detection branch (gated
+// `feature = "ocr"`) and through the wrapper above (gated `paddle_ocr`). ~keep
+#[cfg(any(feature = "ocr", paddle_ocr))]
+pub(crate) fn cluster_word_indices_into_table_regions(words: &[HocrWord]) -> Vec<Vec<usize>> {
     if words.is_empty() {
         return Vec::new();
     }
 
-    let mut sorted: Vec<&HocrWord> = words.iter().collect();
-    sorted.sort_by(|a, b| a.top.cmp(&b.top).then(a.left.cmp(&b.left)));
+    let mut sorted: Vec<usize> = (0..words.len()).collect();
+    sorted.sort_by(|&a, &b| words[a].top.cmp(&words[b].top).then(words[a].left.cmp(&words[b].left)));
 
     let avg_height: u32 = {
-        let total: u32 = sorted.iter().map(|w| w.height).sum();
-        (total / sorted.len() as u32).max(1)
+        let total: u32 = words.iter().map(|w| w.height).sum();
+        (total / words.len() as u32).max(1)
     };
     let region_gap_threshold = avg_height * TABLE_REGION_GAP_HEIGHT_MULTIPLIER;
 
-    let mut regions: Vec<Vec<HocrWord>> = Vec::new();
-    let mut current_region: Vec<HocrWord> = Vec::new();
+    let mut regions: Vec<Vec<usize>> = Vec::new();
+    let mut current_region: Vec<usize> = Vec::new();
     let mut current_bottom: u32 = 0;
 
-    for word in sorted {
+    for index in sorted {
+        let word = &words[index];
         let word_bottom = word.top + word.height;
         let is_new_region =
             !current_region.is_empty() && word.top.saturating_sub(current_bottom) > region_gap_threshold;
@@ -836,7 +849,7 @@ pub(crate) fn cluster_words_into_table_regions(words: &[HocrWord]) -> Vec<Vec<Ho
         }
 
         current_bottom = current_bottom.max(word_bottom);
-        current_region.push(word.clone());
+        current_region.push(index);
     }
     if !current_region.is_empty() {
         regions.push(current_region);

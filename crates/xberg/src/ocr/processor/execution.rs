@@ -26,7 +26,7 @@ use crate::ocr::preprocessing::should_invert_for_polarity;
 #[cfg(feature = "pdf")]
 use crate::ocr::table::post_process_table;
 use crate::ocr::table::{
-    extract_table_words_from_tsv, extract_words_from_tsv, reconstruct_table_with_columns, table_to_markdown,
+    TableWords, extract_table_words_from_tsv, extract_words_from_tsv, reconstruct_table_with_columns, table_to_markdown,
 };
 #[cfg(test)]
 use crate::ocr::types::BatchItemResult;
@@ -55,8 +55,8 @@ fn doc_orientation_detector() -> &'static crate::doc_orientation::DocOrientation
 }
 
 use crate::table_core::{
-    HocrWord, MIN_TABLE_CANDIDATE_WORDS, cluster_words_into_table_regions, detect_rows, drop_leading_caption_row,
-    median_word_height, merge_disjoint_numeric_columns,
+    HocrWord, MIN_TABLE_CANDIDATE_WORDS, cluster_word_indices_into_table_regions, detect_rows,
+    drop_leading_caption_row, median_word_height, merge_disjoint_numeric_columns,
 };
 use crate::types::OcrElement;
 
@@ -490,6 +490,41 @@ fn recognize_quantity_region(
         height: region.word_height,
         confidence: f64::from(confidence),
     })
+}
+
+/// The words of one table region, each with the box Tesseract read for it at the same index.
+struct TableRegion {
+    words: Vec<HocrWord>,
+    read_boxes: Vec<HocrWord>,
+}
+
+impl TableRegion {
+    fn push(&mut self, word: HocrWord) {
+        self.read_boxes.push(word.clone());
+        self.words.push(word);
+    }
+
+    /// The box around the words as Tesseract read them. The text outside the table is picked by
+    /// the centres of the same boxes, so every word of the table falls inside it. ~keep
+    fn bounding_box(&self) -> OcrTableBoundingBox {
+        OcrTableBoundingBox {
+            left: self.read_boxes.iter().map(|w| w.left).min().unwrap_or(0),
+            top: self.read_boxes.iter().map(|w| w.top).min().unwrap_or(0),
+            right: self.read_boxes.iter().map(|w| w.left + w.width).max().unwrap_or(0),
+            bottom: self.read_boxes.iter().map(|w| w.top + w.height).max().unwrap_or(0),
+        }
+    }
+}
+
+/// Split the table words into vertically separated regions, one table each.
+fn table_regions(table_words: &TableWords) -> Vec<TableRegion> {
+    cluster_word_indices_into_table_regions(&table_words.words)
+        .into_iter()
+        .map(|indices| TableRegion {
+            words: indices.iter().map(|&i| table_words.words[i].clone()).collect(),
+            read_boxes: indices.iter().map(|&i| table_words.read_boxes[i].clone()).collect(),
+        })
+        .collect()
 }
 
 /// Build content with OCR tables inlined at their correct vertical positions.
@@ -2059,25 +2094,25 @@ pub(super) fn perform_ocr(
         let tsv_data = tsv_data_for_tables.as_ref().unwrap();
 
         let words = extract_table_words_from_tsv(tsv_data, config.table_min_confidence, &table_mark_symbols)?;
-        let regions = cluster_words_into_table_regions(&words);
 
-        for (region_index, mut region_words) in regions.into_iter().enumerate() {
-            if region_words.len() < MIN_TABLE_CANDIDATE_WORDS {
+        for (region_index, mut region) in table_regions(&words).into_iter().enumerate() {
+            if region.words.len() < MIN_TABLE_CANDIDATE_WORDS {
                 tracing::debug!(
                     target: "xberg::ocr::tables",
                     region_index,
-                    word_count = region_words.len(),
+                    word_count = region.words.len(),
                     min_required = MIN_TABLE_CANDIDATE_WORDS,
                     "OCR table region skipped: below MIN_TABLE_CANDIDATE_WORDS"
                 );
                 continue;
             }
 
-            let region_left = region_words.iter().map(|w| w.left).min().unwrap_or(0);
-            let region_top = region_words.iter().map(|w| w.top).min().unwrap_or(0);
-            let region_right = region_words.iter().map(|w| w.left + w.width).max().unwrap_or(0);
-            let region_bottom = region_words.iter().map(|w| w.top + w.height).max().unwrap_or(0);
-            let word_preview: String = region_words
+            let region_left = region.words.iter().map(|w| w.left).min().unwrap_or(0);
+            let region_top = region.words.iter().map(|w| w.top).min().unwrap_or(0);
+            let region_right = region.words.iter().map(|w| w.left + w.width).max().unwrap_or(0);
+            let region_bottom = region.words.iter().map(|w| w.top + w.height).max().unwrap_or(0);
+            let word_preview: String = region
+                .words
                 .iter()
                 .take(12)
                 .map(|w| w.text.as_str())
@@ -2088,19 +2123,19 @@ pub(super) fn perform_ocr(
                 .collect();
 
             let (mut table, mut column_positions) = reconstruct_table_with_columns(
-                &region_words,
+                &region.words,
                 config.table_column_threshold,
                 config.table_row_threshold_ratio,
             );
             // A section caption sharing this region with the real header row (#1649) always sits
             // in row 0, ahead of any right-aligned-amount column split, so drop it first. ~keep
             drop_leading_caption_row(&mut table);
-            merge_disjoint_numeric_columns(&mut table, &mut column_positions, median_word_height(&region_words));
+            merge_disjoint_numeric_columns(&mut table, &mut column_positions, median_word_height(&region.words));
             let retry_region = if let Some((quantity_column, blank_row)) = quantity_retry_column_index(&table) {
-                let row_positions = detect_rows(&region_words, config.table_row_threshold_ratio);
+                let row_positions = detect_rows(&region.words, config.table_row_threshold_ratio);
                 if row_positions.len() == table.len() {
                     quantity_retry_region(
-                        &region_words,
+                        &region.words,
                         quantity_column,
                         blank_row,
                         &row_positions,
@@ -2116,9 +2151,9 @@ pub(super) fn perform_ocr(
             };
             let recovered = recover_blank_quantity_word(&api, config, retry_region.as_ref(), width, height);
             if let Some(recovered) = recovered {
-                region_words.push(recovered);
+                region.push(recovered);
                 table = reconstruct_table_with_columns(
-                    &region_words,
+                    &region.words,
                     config.table_column_threshold,
                     config.table_row_threshold_ratio,
                 )
@@ -2128,7 +2163,7 @@ pub(super) fn perform_ocr(
             tracing::debug!(
                 target: "xberg::ocr::tables",
                 region_index,
-                word_count = region_words.len(),
+                word_count = region.words.len(),
                 left = region_left,
                 top = region_top,
                 right = region_right,
@@ -2153,21 +2188,11 @@ pub(super) fn perform_ocr(
 
             let markdown_table = table_to_markdown(&cleaned);
 
-            let left = region_words.iter().map(|w| w.left).min().unwrap_or(0);
-            let top = region_words.iter().map(|w| w.top).min().unwrap_or(0);
-            let right = region_words.iter().map(|w| w.left + w.width).max().unwrap_or(0);
-            let bottom = region_words.iter().map(|w| w.top + w.height).max().unwrap_or(0);
-
             tables.push(OcrTable {
                 cells: cleaned,
                 markdown: markdown_table,
                 page_number: config.page_number,
-                bounding_box: Some(OcrTableBoundingBox {
-                    left,
-                    top,
-                    right,
-                    bottom,
-                }),
+                bounding_box: Some(region.bounding_box()),
             });
         }
 
@@ -2493,6 +2518,7 @@ mod tests {
     use crate::ocr::hocr_parser::{
         HOCR_FONT_SIZE_ATTRIBUTE, parse_hocr_to_internal_document_with_page_offset_and_stats,
     };
+    use crate::table_core::cluster_words_into_table_regions;
     use serial_test::serial;
     use tempfile::tempdir;
 
@@ -3025,6 +3051,72 @@ mod tests {
     #[test]
     fn cluster_words_into_table_regions_empty_input_yields_no_regions() {
         assert!(cluster_words_into_table_regions(&[]).is_empty());
+    }
+
+    const TSV_HEADER: &str =
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n";
+
+    /// The last row's label is two words on one Tesseract line, and shading stretched the first
+    /// word's box down past the table. Its row takes the line's typical box, so a bounding box
+    /// built from those boxes ends above the centre of the stretched word as Tesseract read it,
+    /// and the text rebuild printed that word a second time below the table.
+    #[test]
+    fn a_stretched_edge_row_word_is_inside_its_table_and_prints_once() {
+        let tsv = format!(
+            "{TSV_HEADER}\
+5\t1\t1\t1\t1\t1\t100\t100\t90\t26\t90\tAlpha\n\
+5\t1\t2\t1\t1\t1\t600\t100\t60\t26\t90\t10\n\
+5\t1\t3\t1\t1\t1\t800\t100\t60\t26\t90\t20\n\
+5\t1\t4\t1\t1\t1\t100\t150\t90\t26\t90\tBravo\n\
+5\t1\t5\t1\t1\t1\t600\t150\t60\t26\t90\t30\n\
+5\t1\t6\t1\t1\t1\t800\t150\t60\t26\t90\t40\n\
+5\t1\t7\t1\t1\t1\t100\t200\t100\t62\t90\tCharlie\n\
+5\t1\t7\t1\t1\t2\t210\t200\t80\t26\t90\tTail\n\
+5\t1\t8\t1\t1\t1\t600\t200\t60\t26\t90\t50\n\
+5\t1\t9\t1\t1\t1\t800\t200\t60\t26\t90\t60\n"
+        );
+        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap();
+        let regions = table_regions(&words);
+        assert_eq!(regions.len(), 1);
+        let region = &regions[0];
+        let cells = reconstruct_table_with_columns(&region.words, 20, 0.5).0;
+        let tables = [OcrTable {
+            markdown: table_to_markdown(&cells),
+            cells,
+            page_number: 1,
+            bounding_box: Some(region.bounding_box()),
+        }];
+
+        let content = build_content_with_inline_tables(&tsv, &tables, 0.0);
+
+        assert!(content.contains("Charlie Tail"), "the label shares its row: {content}");
+        assert_eq!(
+            content.matches("Charlie").count(),
+            1,
+            "the stretched word prints once, in the table: {content}"
+        );
+    }
+
+    #[test]
+    fn a_word_pushed_onto_a_table_region_widens_its_bounding_box() {
+        let mut region = TableRegion {
+            words: table_grid_words(0, 0, 2, 2),
+            read_boxes: table_grid_words(0, 0, 2, 2),
+        };
+        let before = region.bounding_box();
+        let below = HocrWord {
+            text: "7".to_string(),
+            left: before.left,
+            top: before.bottom + 40,
+            width: 10,
+            height: 10,
+            confidence: 90.0,
+        };
+
+        region.push(below.clone());
+
+        assert_eq!(region.bounding_box().bottom, below.top + below.height);
+        assert_eq!(region.words.len(), region.read_boxes.len());
     }
 
     fn text_element_with_font_size(text: &str, font_size: Option<f64>) -> crate::types::internal::InternalElement {
