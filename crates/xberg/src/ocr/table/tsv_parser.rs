@@ -302,6 +302,52 @@ mod tests {
         );
     }
 
+    /// Two words with the same fused text in different rows: each piece takes the character boxes
+    /// reported at its own word's position, not those of the first word with that text.
+    #[test]
+    fn table_words_with_the_same_text_take_the_symbols_reported_at_their_own_box() {
+        let symbols = [
+            reported_word(
+                "___41_",
+                1000,
+                100,
+                60,
+                30,
+                &[
+                    ("_", 1000, 1006),
+                    ("_", 1006, 1012),
+                    ("_", 1012, 1018),
+                    ("4", 1020, 1027),
+                    ("1", 1028, 1036),
+                    ("_", 1040, 1058),
+                ],
+            ),
+            reported_word(
+                "___41_",
+                1300,
+                260,
+                60,
+                30,
+                &[
+                    ("_", 1300, 1302),
+                    ("_", 1302, 1304),
+                    ("_", 1304, 1306),
+                    ("4", 1310, 1317),
+                    ("1", 1318, 1326),
+                    ("_", 1330, 1358),
+                ],
+            ),
+        ];
+        assert_eq!(
+            table_words_with_symbols(
+                "5\t1\t0\t0\t0\t0\t1000\t100\t60\t30\t90\t___41_\n\
+5\t1\t0\t0\t1\t0\t1300\t260\t60\t30\t90\t___41_\n",
+                &symbols,
+            ),
+            owned(&[("41", 1020, 16), ("41", 1310, 16)])
+        );
+    }
+
     #[test]
     fn table_words_keep_underscores_that_are_text() {
         let words = table_words(
