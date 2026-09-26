@@ -1,6 +1,7 @@
 use super::super::error::OcrError;
 use super::super::utils::{TSV_MIN_FIELDS, TSV_WORD_LEVEL};
-use crate::table_core::HocrWord;
+use crate::table_core::{HocrWord, median_word_height};
+use std::collections::HashMap;
 use std::ops::Range;
 use xberg_tesseract::WordSymbols;
 
@@ -9,6 +10,19 @@ use xberg_tesseract::WordSymbols;
 /// This parses Tesseract's TSV format (level, page_num, block_num, ...) and
 /// converts it to the HocrWord format used for table reconstruction.
 pub(crate) fn extract_words_from_tsv(tsv_data: &str, min_confidence: f64) -> Result<Vec<HocrWord>, OcrError> {
+    Ok(words_on_lines(tsv_data, min_confidence)
+        .into_iter()
+        .map(|(_, word)| word)
+        .collect())
+}
+
+/// The page, block, paragraph and line numbers Tesseract gives a word: words with one key sit on
+/// one text line.
+type TextLine = [u32; 4];
+
+/// The words of [`extract_words_from_tsv`], each with its [`TextLine`], or `None` when a line
+/// field does not parse.
+fn words_on_lines(tsv_data: &str, min_confidence: f64) -> Vec<(Option<TextLine>, HocrWord)> {
     let mut words = Vec::new();
 
     for (line_num, line) in tsv_data.lines().enumerate() {
@@ -49,11 +63,15 @@ pub(crate) fn extract_words_from_tsv(tsv_data: &str, min_confidence: f64) -> Res
             height: fields[9].parse().unwrap_or(0),
             confidence: conf,
         };
+        let line = match [fields[1], fields[2], fields[3], fields[4]].map(str::parse::<u32>) {
+            [Ok(page), Ok(block), Ok(paragraph), Ok(line)] => Some([page, block, paragraph, line]),
+            _ => None,
+        };
 
-        words.push(word);
+        words.push((line, word));
     }
 
-    Ok(words)
+    words
 }
 
 /// Extract the words table reconstruction reads: [`extract_words_from_tsv`], with the underscore
@@ -71,12 +89,42 @@ pub(crate) fn extract_table_words_from_tsv(
     min_confidence: f64,
     symbols: &[WordSymbols],
 ) -> Result<Vec<HocrWord>, OcrError> {
-    let words = extract_words_from_tsv(tsv_data, min_confidence)?;
+    let words = words_on_lines(tsv_data, min_confidence);
     let mut table_words = Vec::with_capacity(words.len());
-    for word in words {
+    let mut lines = Vec::with_capacity(words.len());
+    for (line, word) in words {
         push_without_underscore_marks(word, symbols, &mut table_words);
+        lines.resize(table_words.len(), line);
     }
+    put_line_words_on_one_band(&mut table_words, &lines);
     Ok(table_words)
+}
+
+/// Give every word on one Tesseract text line the vertical box of the line's word whose height
+/// is nearest the median word height (xberg-io/xberg#1834).
+///
+/// Table rows group words by the centre of their box. Shading can stretch one word's box over the
+/// row below, and its centre then passes the row threshold, so the word starts a row of its own
+/// while Tesseract reads it on one line with the rest of its label. The word of typical height is
+/// the one the shading did not stretch. ~keep
+fn put_line_words_on_one_band(words: &mut [HocrWord], lines: &[Option<TextLine>]) {
+    let median_height = median_word_height(words);
+    let mut bands: HashMap<TextLine, (u32, u32)> = HashMap::new();
+    for (word, line) in words.iter().zip(lines) {
+        let Some(line) = line else {
+            continue;
+        };
+        let band = bands.entry(*line).or_insert((word.top, word.height));
+        if word.height.abs_diff(median_height) < band.1.abs_diff(median_height) {
+            *band = (word.top, word.height);
+        }
+    }
+    for (word, line) in words.iter_mut().zip(lines) {
+        if let Some(&(top, height)) = line.as_ref().and_then(|line| bands.get(line)) {
+            word.top = top;
+            word.height = height;
+        }
+    }
 }
 
 fn push_without_underscore_marks(word: HocrWord, symbols: &[WordSymbols], out: &mut Vec<HocrWord>) {
@@ -375,14 +423,15 @@ mod tests {
 
     /// Two values with a shading mark fused onto the second: the mark's box closes the gap
     /// between the columns, so without the trim the cell merge joins both values into one cell.
+    /// Each row sits on a text line of its own, as Tesseract reports it.
     #[test]
     fn underscore_marks_between_two_values_do_not_glue_them_into_one_cell() {
         let tsv = format!(
             "{TSV_HEADER}\
 5\t1\t0\t0\t0\t0\t100\t100\t60\t30\t90\tYear\n\
 5\t1\t0\t0\t0\t1\t300\t100\t60\t30\t90\tYear\n\
-5\t1\t0\t0\t0\t2\t100\t160\t80\t30\t60\t6,867\n\
-5\t1\t0\t0\t0\t3\t184\t160\t240\t30\t8\t_____7,073__\n"
+5\t1\t0\t0\t1\t0\t100\t160\t80\t30\t60\t6,867\n\
+5\t1\t0\t0\t1\t1\t184\t160\t240\t30\t8\t_____7,073__\n"
         );
         let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap();
         let table = crate::table_core::reconstruct_table(&words, 20, 0.5);
@@ -395,6 +444,79 @@ mod tests {
             value_row.iter().any(|cell| cell == "7,073"),
             "the second value must sit in a cell of its own: {table:?}"
         );
+    }
+
+    /// A three-row table whose middle label is two words. The first label word's box is stretched
+    /// down over the next row, as shading does, and `tail_line` sets the text line the second
+    /// label word sits on. The first row's values arrive fused across an underscore mark, so the
+    /// words after it only keep their own lines if each piece of a split word keeps its line.
+    fn stretched_label_table(tail_line: &str) -> Vec<Vec<String>> {
+        let tsv = format!(
+            "{TSV_HEADER}\
+5\t1\t1\t1\t1\t1\t100\t100\t90\t26\t90\tAlpha\n\
+5\t1\t2\t1\t1\t1\t600\t100\t300\t26\t90\t10__20\n\
+5\t1\t4\t1\t1\t1\t100\t150\t100\t62\t90\tBravo\n\
+5\t{tail_line}\t2\t210\t150\t80\t26\t90\tTail\n\
+5\t1\t5\t1\t1\t1\t600\t150\t60\t26\t90\t30\n\
+5\t1\t6\t1\t1\t1\t800\t150\t60\t26\t90\t40\n\
+5\t1\t7\t1\t1\t1\t100\t230\t90\t26\t90\tCharlie\n\
+5\t1\t8\t1\t1\t1\t600\t230\t60\t26\t90\t50\n\
+5\t1\t9\t1\t1\t1\t800\t230\t60\t26\t90\t60\n"
+        );
+        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap();
+        crate::table_core::reconstruct_table(&words, 20, 0.5)
+    }
+
+    #[test]
+    fn words_on_one_tesseract_line_share_a_row_when_shading_stretches_one_box() {
+        let table = stretched_label_table("1\t4\t1\t1");
+        assert_eq!(
+            table,
+            [
+                ["Alpha", "10", "20"],
+                ["Bravo Tail", "30", "40"],
+                ["Charlie", "50", "60"]
+            ],
+            "the stretched label word must stay in the row of its line"
+        );
+    }
+
+    /// The negative twin: the same boxes on two text lines keep the split, so the line is what
+    /// joins them.
+    #[test]
+    fn words_on_different_tesseract_lines_keep_their_own_boxes() {
+        let table = stretched_label_table("1\t10\t1\t1");
+        let row_of = |text: &str| {
+            table
+                .iter()
+                .position(|row| row.iter().any(|cell| cell.split_whitespace().any(|word| word == text)))
+        };
+        assert_ne!(
+            row_of("Bravo"),
+            row_of("Tail"),
+            "the stretched word on a line of its own stays apart: {table:?}"
+        );
+        assert_eq!(
+            row_of("Tail"),
+            row_of("30"),
+            "the typical word stays in the row of its values: {table:?}"
+        );
+    }
+
+    /// A line number that does not parse is unknown, never line 0 shared with other words.
+    #[test]
+    fn a_word_whose_line_does_not_parse_keeps_its_own_box() {
+        let tsv = format!(
+            "{TSV_HEADER}\
+5\t1\t4\t1\tx\t1\t100\t150\t100\t62\t90\tBravo\n\
+5\t1\t4\t1\tx\t2\t210\t150\t80\t26\t90\tTail\n"
+        );
+        let boxes: Vec<(u32, u32)> = extract_table_words_from_tsv(&tsv, 0.0, &[])
+            .unwrap()
+            .iter()
+            .map(|word| (word.top, word.height))
+            .collect();
+        assert_eq!(boxes, [(150, 62), (150, 26)]);
     }
 
     #[test]
