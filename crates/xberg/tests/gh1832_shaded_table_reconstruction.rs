@@ -231,14 +231,49 @@ fn enough_ground_truth_values_land_in_the_right_cell() {
 
 /// The edge of a shaded row reads as runs of underscores fused onto the values beside it, and
 /// such a fused word's box used to close the gap between two columns and join two values into
-/// one cell (GH#1833). The marks are cut out of each word before reconstruction, so no cell
-/// keeps one. The positive twin: a value the page prints in every column still reads whole.
+/// one cell (GH#1833). At PSM 3 two value pairs were glued that way: each value must now fill a
+/// cell of its own. OCR reads some commas as periods, so the check folds them.
 #[test]
-fn no_cell_keeps_the_shading_underscore_marks() {
+fn values_glued_by_the_shading_underscore_marks_fill_cells_of_their_own() {
+    let table = first_table(3, false).expect("PSM 3 must produce a table");
+    let cells: Vec<String> = table
+        .cells
+        .iter()
+        .flatten()
+        .map(|cell| cell.trim().replace('.', ","))
+        .collect();
+    for value in ["(2,100)", "(2,163)", "6,867"] {
+        assert!(
+            cells.iter().any(|cell| cell == value),
+            "PSM 3: {value} must fill a cell of its own: {:?}",
+            table.cells
+        );
+    }
+    assert!(
+        cells
+            .iter()
+            .any(|cell| cell.ends_with("7,073") && !cell.contains("6,867")),
+        "PSM 3: 7,073 must sit in a cell apart from 6,867: {:?}",
+        table.cells
+    );
+}
+
+/// No cell that holds a value keeps an underscore mark. The positive twin: a value the page
+/// prints in every column still reads whole.
+#[test]
+fn no_value_cell_keeps_the_shading_underscore_marks() {
     for psm in [3, 11] {
         let table = first_table(psm, false).unwrap_or_else(|| panic!("PSM {psm} must produce a table"));
-        let marked: Vec<&String> = table.cells.iter().flatten().filter(|cell| cell.contains('_')).collect();
-        assert!(marked.is_empty(), "PSM {psm}: cells keep underscore marks: {marked:?}");
+        let marked: Vec<&String> = table
+            .cells
+            .iter()
+            .flatten()
+            .filter(|cell| cell.contains('_') && cell.chars().any(|ch| ch.is_ascii_digit()))
+            .collect();
+        assert!(
+            marked.is_empty(),
+            "PSM {psm}: value cells keep underscore marks: {marked:?}"
+        );
         assert!(
             table.cells.iter().flatten().any(|cell| cell.trim() == "3,250"),
             "PSM {psm}: a plainly printed value must still read whole"

@@ -1498,6 +1498,26 @@ fn security_limits_for_ocr(
         .unwrap_or_default()
 }
 
+/// The symbols of every word with an underscore, which table reconstruction reads to cut a mark
+/// out of a word. Empty when Tesseract gives no result iterator or cannot read the symbols: the
+/// cut then estimates each piece's box from its share of the word's characters. ~keep
+fn underscore_word_symbols(api: &TesseractAPI) -> Vec<xberg_tesseract::WordSymbols> {
+    match api
+        .get_iterator()
+        .and_then(|iterator| iterator.extract_word_symbols(|text| text.contains('_')))
+    {
+        Ok(words) => words,
+        Err(error) => {
+            tracing::debug!(
+                target: "xberg::ocr::tables",
+                %error,
+                "Tesseract symbol boxes unavailable; underscore marks are cut by character share"
+            );
+            Vec::new()
+        }
+    }
+}
+
 /// Perform OCR on an image using Tesseract.
 ///
 /// This function handles the complete OCR pipeline:
@@ -1824,6 +1844,10 @@ pub(super) fn perform_ocr(
     } else {
         None
     };
+    let table_mark_symbols = match tsv_data_for_tables.as_deref() {
+        Some(tsv) if config.enable_table_detection && tsv.contains('_') => underscore_word_symbols(&api),
+        _ => Vec::new(),
+    };
 
     let mut hocr_document: Option<InternalDocument> = None;
     let mut dictionary_filtered_line_count = 0usize;
@@ -2034,7 +2058,7 @@ pub(super) fn perform_ocr(
     if config.enable_table_detection {
         let tsv_data = tsv_data_for_tables.as_ref().unwrap();
 
-        let words = extract_table_words_from_tsv(tsv_data, config.table_min_confidence)?;
+        let words = extract_table_words_from_tsv(tsv_data, config.table_min_confidence, &table_mark_symbols)?;
         let regions = cluster_words_into_table_regions(&words);
 
         for (region_index, mut region_words) in regions.into_iter().enumerate() {

@@ -1,6 +1,8 @@
 use super::super::error::OcrError;
 use super::super::utils::{TSV_MIN_FIELDS, TSV_WORD_LEVEL};
 use crate::table_core::HocrWord;
+use std::ops::Range;
+use xberg_tesseract::WordSymbols;
 
 /// Extract words from Tesseract TSV output and convert to HocrWord format.
 ///
@@ -54,59 +56,140 @@ pub(crate) fn extract_words_from_tsv(tsv_data: &str, min_confidence: f64) -> Res
     Ok(words)
 }
 
-/// Extract the words table reconstruction reads: [`extract_words_from_tsv`], with underscore
-/// marks removed from each word (xberg-io/xberg#1833).
+/// Extract the words table reconstruction reads: [`extract_words_from_tsv`], with the underscore
+/// marks that sit against a value cut out of each word (xberg-io/xberg#1833).
 ///
-/// Tesseract reads the edge of a shaded row as runs of underscores and fuses them onto the
-/// values around it (`___7,073_`) or into one word spanning two values (`(2,100)__(2,163)`).
-/// The fused word's box then covers the gap between two columns, so the cell merge joins two
-/// values into one cell. A leading or trailing run, or an interior run of two or more, is a
-/// mark: the word is cut there and each piece keeps the share of the box its characters span.
-/// A single interior underscore (`snake_case`) is text and stays. ~keep
-pub(crate) fn extract_table_words_from_tsv(tsv_data: &str, min_confidence: f64) -> Result<Vec<HocrWord>, OcrError> {
-    Ok(extract_words_from_tsv(tsv_data, min_confidence)?
-        .into_iter()
-        .flat_map(split_at_underscore_marks)
-        .collect())
+/// Tesseract reads the edge of a shaded row as underscores fused onto a value (`___7,073_`) or
+/// between two values (`(2,100)__(2,163)`), and the fused box closes the gap between two columns.
+/// A leading or trailing run is a mark when the text beside it is a value. An interior run of two
+/// or more is a mark when the text on both sides is a value. Other underscores are text
+/// (`file_name`, `ID__001`, `__init__`, a `____` blank). Each piece takes the box of its own
+/// symbols from `symbols` when they spell the word, else the share of the box its characters
+/// span. ~keep
+pub(crate) fn extract_table_words_from_tsv(
+    tsv_data: &str,
+    min_confidence: f64,
+    symbols: &[WordSymbols],
+) -> Result<Vec<HocrWord>, OcrError> {
+    let words = extract_words_from_tsv(tsv_data, min_confidence)?;
+    let mut table_words = Vec::with_capacity(words.len());
+    for word in words {
+        push_without_underscore_marks(word, symbols, &mut table_words);
+    }
+    Ok(table_words)
 }
 
-fn split_at_underscore_marks(word: HocrWord) -> Vec<HocrWord> {
+fn push_without_underscore_marks(word: HocrWord, symbols: &[WordSymbols], out: &mut Vec<HocrWord>) {
     if !word.text.contains('_') {
-        return vec![word];
+        out.push(word);
+        return;
     }
     let chars: Vec<char> = word.text.chars().collect();
-    let mut pieces = Vec::new();
-    let mut piece_start = None;
+    let marks = underscore_mark_runs(&chars);
+    if marks.is_empty() {
+        out.push(word);
+        return;
+    }
+    let char_spans = symbol_char_spans(&word, &chars, symbols);
+    let mut piece_start = 0;
+    for mark in marks.into_iter().chain(std::iter::once(chars.len()..chars.len())) {
+        if mark.start > piece_start {
+            out.push(word_piece(
+                &word,
+                &chars,
+                piece_start..mark.start,
+                char_spans.as_deref(),
+            ));
+        }
+        piece_start = mark.end;
+    }
+}
+
+/// The underscore runs of `chars` that are marks rather than text, in order.
+fn underscore_mark_runs(chars: &[char]) -> Vec<Range<usize>> {
+    let mut runs = Vec::new();
     let mut index = 0;
     while index < chars.len() {
-        if chars[index] != '_' {
-            piece_start.get_or_insert(index);
-            index += 1;
-            continue;
-        }
         let run_end = chars[index..]
             .iter()
             .position(|&ch| ch != '_')
             .map_or(chars.len(), |offset| index + offset);
-        let is_text = run_end - index == 1 && run_end < chars.len();
-        if !is_text && let Some(start) = piece_start.take() {
-            pieces.push(word_piece(&word, &chars, start, index));
+        if run_end > index {
+            runs.push(index..run_end);
+            index = run_end;
+        } else {
+            index += 1;
         }
-        index = run_end;
     }
-    if let Some(start) = piece_start {
-        pieces.push(word_piece(&word, &chars, start, chars.len()));
-    }
-    pieces
+    let texts: Vec<&[char]> = (0..=runs.len())
+        .map(|slot| {
+            let start = if slot == 0 { 0 } else { runs[slot - 1].end };
+            let end = runs.get(slot).map_or(chars.len(), |run| run.start);
+            &chars[start..end]
+        })
+        .collect();
+    runs.into_iter()
+        .enumerate()
+        .filter(|(slot, run)| match (texts[*slot], texts[slot + 1]) {
+            ([], []) => false,
+            ([], after) => is_value(after),
+            (before, []) => is_value(before),
+            (before, after) => run.len() >= 2 && is_value(before) && is_value(after),
+        })
+        .map(|(_, run)| run)
+        .collect()
 }
 
-fn word_piece(word: &HocrWord, chars: &[char], start: usize, end: usize) -> HocrWord {
-    let span = |offset: usize| (u64::from(word.width) * offset as u64 / chars.len() as u64) as u32;
+fn is_value(text: &[char]) -> bool {
+    text.iter().any(char::is_ascii_digit) && !text.iter().any(|ch| ch.is_alphabetic())
+}
+
+/// The horizontal extent of each character of `word`, from the symbols Tesseract reported for it,
+/// or `None` when no reported word matches its box or its symbols do not spell its text.
+fn symbol_char_spans(word: &HocrWord, chars: &[char], symbols: &[WordSymbols]) -> Option<Vec<(u32, u32)>> {
+    let reported = symbols.iter().find(|reported| {
+        reported.text == word.text
+            && u32::try_from(reported.left).ok() == Some(word.left)
+            && u32::try_from(reported.top).ok() == Some(word.top)
+            && u32::try_from(reported.right - reported.left).ok() == Some(word.width)
+            && u32::try_from(reported.bottom - reported.top).ok() == Some(word.height)
+    })?;
+    let mut spans = Vec::with_capacity(chars.len());
+    let mut spelled = Vec::with_capacity(chars.len());
+    for symbol in &reported.symbols {
+        let span = (u32::try_from(symbol.left).ok()?, u32::try_from(symbol.right).ok()?);
+        for ch in symbol.text.chars() {
+            spans.push(span);
+            spelled.push(ch);
+        }
+    }
+    (spelled == chars).then_some(spans)
+}
+
+fn word_piece(word: &HocrWord, chars: &[char], piece: Range<usize>, char_spans: Option<&[(u32, u32)]>) -> HocrWord {
+    let (left, right) = match char_spans {
+        Some(spans) => (
+            spans[piece.clone()]
+                .iter()
+                .map(|span| span.0)
+                .min()
+                .unwrap_or(word.left),
+            spans[piece.clone()]
+                .iter()
+                .map(|span| span.1)
+                .max()
+                .unwrap_or(word.left),
+        ),
+        None => {
+            let share = |offset: usize| (u64::from(word.width) * offset as u64 / chars.len() as u64) as u32;
+            (word.left + share(piece.start), word.left + share(piece.end))
+        }
+    };
     HocrWord {
-        text: chars[start..end].iter().collect(),
-        left: word.left + span(start),
+        text: chars[piece].iter().collect(),
+        left,
         top: word.top,
-        width: span(end) - span(start),
+        width: right.saturating_sub(left),
         height: word.height,
         confidence: word.confidence,
     }
@@ -116,53 +199,131 @@ fn word_piece(word: &HocrWord, chars: &[char], start: usize, end: usize) -> Hocr
 mod tests {
     use super::*;
 
-    fn table_word_texts(tsv_rows: &str) -> Vec<(String, u32, u32)> {
-        let tsv = format!(
-            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n{tsv_rows}"
-        );
-        extract_table_words_from_tsv(&tsv, 0.0)
+    const TSV_HEADER: &str =
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n";
+
+    fn table_words_with_symbols(tsv_rows: &str, symbols: &[WordSymbols]) -> Vec<(String, u32, u32)> {
+        extract_table_words_from_tsv(&format!("{TSV_HEADER}{tsv_rows}"), 0.0, symbols)
             .unwrap()
             .into_iter()
             .map(|word| (word.text, word.left, word.width))
             .collect()
     }
 
-    #[test]
-    fn table_words_trim_leading_and_trailing_underscore_marks_and_narrow_the_box() {
-        let words = table_word_texts(
-            "5\t1\t0\t0\t0\t0\t2000\t100\t90\t60\t8\t___7,073_\n5\t1\t0\t0\t0\t1\t2200\t100\t60\t30\t8\t_5,017\n",
+    fn table_words(tsv_rows: &str) -> Vec<(String, u32, u32)> {
+        table_words_with_symbols(tsv_rows, &[])
+    }
+
+    fn owned(words: &[(&str, u32, u32)]) -> Vec<(String, u32, u32)> {
+        words
+            .iter()
+            .map(|&(text, left, width)| (text.to_string(), left, width))
+            .collect()
+    }
+
+    /// The symbols Tesseract reports for one word: each `(text, left, right)` becomes a symbol.
+    fn reported_word(
+        text: &str,
+        left: i32,
+        top: i32,
+        width: i32,
+        height: i32,
+        symbols: &[(&str, i32, i32)],
+    ) -> WordSymbols {
+        WordSymbols {
+            text: text.to_string(),
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+            symbols: symbols
+                .iter()
+                .map(|&(text, left, right)| xberg_tesseract::SymbolBox {
+                    text: text.to_string(),
+                    left,
+                    top,
+                    right,
+                    bottom: top + height,
+                })
+                .collect(),
+        }
+    }
+
+    /// The symbols of `(2,100)__(2,163)` at x 1000, with the second value further right than its
+    /// character share (1090) puts it.
+    fn fused_pair_symbols(text_of_last_symbol: &str) -> WordSymbols {
+        let mut symbols: Vec<(&str, i32, i32)> = ["(", "2", ",", "1", "0", "0", ")"]
+            .iter()
+            .zip((1000..).step_by(9))
+            .map(|(&text, left)| (text, left, left + 8))
+            .collect();
+        symbols.extend([("_", 1061, 1062), ("_", 1062, 1063)]);
+        symbols.extend(
+            ["(", "2", ",", "1", "6", "3"]
+                .iter()
+                .zip((1100..).step_by(9))
+                .map(|(&text, left)| (text, left, left + 8)),
         );
+        symbols.push((text_of_last_symbol, 1146, 1160));
+        reported_word("(2,100)__(2,163)", 1000, 100, 160, 40, &symbols)
+    }
+
+    const FUSED_PAIR_ROW: &str = "5\t1\t0\t0\t0\t0\t1000\t100\t160\t40\t0\t(2,100)__(2,163)\n";
+
+    #[test]
+    fn table_words_trim_underscore_marks_against_a_value_and_narrow_the_box() {
+        let words = table_words(
+            "5\t1\t0\t0\t0\t0\t1000\t100\t90\t60\t8\t___7,073_\n5\t1\t0\t0\t0\t1\t1300\t100\t60\t30\t8\t_5,017\n",
+        );
+        assert_eq!(words, owned(&[("7,073", 1030, 50), ("5,017", 1310, 50)]));
+    }
+
+    #[test]
+    fn table_words_split_one_word_fused_across_an_underscore_run_between_two_values() {
         assert_eq!(
-            words,
-            vec![("7,073".to_string(), 2030, 50), ("5,017".to_string(), 2210, 50)]
+            table_words(FUSED_PAIR_ROW),
+            owned(&[("(2,100)", 1000, 70), ("(2,163)", 1090, 70)])
         );
     }
 
     #[test]
-    fn table_words_split_one_word_fused_across_an_underscore_run() {
-        let words = table_word_texts("5\t1\t0\t0\t0\t0\t1000\t100\t160\t40\t0\t(2,100)__(2,163)\n");
+    fn table_words_take_each_piece_box_from_its_own_symbols() {
         assert_eq!(
-            words,
-            vec![("(2,100)".to_string(), 1000, 70), ("(2,163)".to_string(), 1090, 70)]
+            table_words_with_symbols(FUSED_PAIR_ROW, &[fused_pair_symbols(")")]),
+            owned(&[("(2,100)", 1000, 62), ("(2,163)", 1100, 60)])
         );
     }
 
     #[test]
-    fn table_words_drop_a_word_of_only_underscores_and_keep_its_neighbours() {
-        let words = table_word_texts(
-            "5\t1\t0\t0\t0\t0\t100\t100\t60\t30\t90\tItem\n5\t1\t0\t0\t0\t1\t200\t100\t40\t4\t50\t___\n",
+    fn table_words_fall_back_to_the_character_share_when_the_symbols_do_not_spell_the_word() {
+        assert_eq!(
+            table_words_with_symbols(FUSED_PAIR_ROW, &[fused_pair_symbols("]")]),
+            owned(&[("(2,100)", 1000, 70), ("(2,163)", 1090, 70)])
         );
-        assert_eq!(words, vec![("Item".to_string(), 100, 60)]);
     }
 
     #[test]
-    fn table_words_keep_a_single_interior_underscore_and_plain_words_whole() {
-        let words = table_word_texts(
-            "5\t1\t0\t0\t0\t0\t100\t100\t90\t30\t90\tfile_name\n5\t1\t0\t0\t0\t1\t300\t100\t50\t30\t90\t4,871\n",
+    fn table_words_keep_underscores_that_are_text() {
+        let words = table_words(
+            "5\t1\t0\t0\t0\t0\t100\t100\t70\t30\t90\tID__001\n\
+5\t1\t0\t0\t0\t1\t300\t100\t80\t30\t90\t__init__\n\
+5\t1\t0\t0\t0\t2\t500\t100\t40\t4\t50\t____\n\
+5\t1\t0\t0\t0\t3\t700\t100\t90\t30\t90\tfile_name\n\
+5\t1\t0\t0\t0\t4\t900\t100\t60\t30\t90\tAB__12\n\
+5\t1\t0\t0\t0\t5\t1100\t100\t50\t30\t90\t4,871\n\
+5\t1\t0\t0\t0\t6\t1300\t100\t60\t30\t90\t12_345\n",
         );
         assert_eq!(
             words,
-            vec![("file_name".to_string(), 100, 90), ("4,871".to_string(), 300, 50)]
+            owned(&[
+                ("ID__001", 100, 70),
+                ("__init__", 300, 80),
+                ("____", 500, 40),
+                ("file_name", 700, 90),
+                ("AB__12", 900, 60),
+                ("4,871", 1100, 50),
+                ("12_345", 1300, 60),
+            ])
         );
     }
 
@@ -170,12 +331,14 @@ mod tests {
     /// between the columns, so without the trim the cell merge joins both values into one cell.
     #[test]
     fn underscore_marks_between_two_values_do_not_glue_them_into_one_cell() {
-        let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
+        let tsv = format!(
+            "{TSV_HEADER}\
 5\t1\t0\t0\t0\t0\t100\t100\t60\t30\t90\tYear\n\
 5\t1\t0\t0\t0\t1\t300\t100\t60\t30\t90\tYear\n\
-5\t1\t0\t0\t0\t2\t100\t200\t90\t30\t60\t6,867\n\
-5\t1\t0\t0\t0\t3\t200\t200\t190\t30\t8\t_____7,073__\n";
-        let words = extract_table_words_from_tsv(tsv, 0.0).unwrap();
+5\t1\t0\t0\t0\t2\t100\t160\t80\t30\t60\t6,867\n\
+5\t1\t0\t0\t0\t3\t184\t160\t240\t30\t8\t_____7,073__\n"
+        );
+        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap();
         let table = crate::table_core::reconstruct_table(&words, 20, 0.5);
         assert!(
             table.iter().flatten().all(|cell| !cell.contains('_')),
