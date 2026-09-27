@@ -2455,7 +2455,7 @@ fn is_lone_dash_cell(text: &str) -> bool {
 }
 
 /// Whether `text` — already run through [`normalize_dash_glyphs_and_spacing`] — is a bare
-/// numeric literal: an optional leading `-`, one or more digits with at most one `.`, and
+/// numeric literal: an optional leading `-`, a mantissa as [`is_numeric_mantissa`] reads it, and
 /// an optional exponent (`e`/`E`, optional sign, one or more digits). Anything containing a
 /// letter outside that exponent marker, or no digits at all, is not a number (xberg-io/
 /// xberg#1582).
@@ -2474,21 +2474,29 @@ fn looks_like_numeric_literal(text: &str) -> bool {
     })
 }
 
-/// Whether `text` is one or more ASCII digits with at most one `.` separator.
+/// Whether `text` is an integer part and an optional `.` with fraction digits, with at
+/// least one digit on either side of the `.`. The integer part is plain digits or
+/// thousands-grouped digits (`1,234,567`), so an amount column reads as numeric however
+/// it groups its thousands (xberg-io/xberg#1914).
 fn is_numeric_mantissa(text: &str) -> bool {
-    if text.is_empty() {
+    let (integer, fraction) = text.split_once('.').unwrap_or((text, ""));
+    if !is_ascii_digits(fraction) {
         return false;
     }
-    let mut seen_dot = false;
-    let mut seen_digit = false;
-    for character in text.chars() {
-        match character {
-            '0'..='9' => seen_digit = true,
-            '.' if !seen_dot => seen_dot = true,
-            _ => return false,
-        }
+    if integer.is_empty() {
+        return !fraction.is_empty();
     }
-    seen_digit
+    let mut groups = integer.split(',');
+    let first = groups.next().unwrap_or_default();
+    if first.is_empty() || !is_ascii_digits(first) {
+        return false;
+    }
+    !integer.contains(',') || (first.len() <= 3 && groups.all(|group| group.len() == 3 && is_ascii_digits(group)))
+}
+
+/// Whether every character of `text` is an ASCII digit (true for an empty `text`).
+fn is_ascii_digits(text: &str) -> bool {
+    text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -4751,6 +4759,55 @@ mod tests {
             processed[4],
             vec!["Afschrijving".to_string(), "-12".to_string(), "-9".to_string()]
         );
+    }
+
+    /// A column of thousands-separated amounts gets the same normalisation as a column of
+    /// plain digits: its nil dashes are emptied and `"- 5,000"` is joined to `"-5,000"`
+    /// (xberg-io/xberg#1914).
+    #[test]
+    fn comma_grouped_amount_column_is_normalized_like_plain_digits() {
+        let table = vec![
+            vec!["Item".to_string(), "Year 1".to_string(), "Year 2".to_string()],
+            vec!["Alpha".to_string(), "12,480".to_string(), "3,905".to_string()],
+            vec!["Bravo".to_string(), "-".to_string(), "- 5,000".to_string()],
+            vec!["Charlie".to_string(), "1,204,337".to_string(), "88,120".to_string()],
+            vec!["Delta".to_string(), "7,450".to_string(), "\u{2014}".to_string()],
+        ];
+        let processed = post_process_table(table, true, false).expect("amount table must be accepted");
+        assert_eq!(
+            processed[2],
+            vec!["Bravo".to_string(), String::new(), "-5,000".to_string()]
+        );
+        assert_eq!(
+            processed[4],
+            vec!["Delta".to_string(), "7,450".to_string(), String::new()]
+        );
+    }
+
+    /// Commas count as thousands separators only in groups of three digits after a first
+    /// group of one to three digits (xberg-io/xberg#1914).
+    #[test]
+    fn numeric_literal_accepts_only_well_formed_thousands_groups() {
+        for text in [
+            "7",
+            "1,234",
+            "12,345,678",
+            "-5,000",
+            "1,234.50",
+            "1,234.",
+            ".5",
+            "5.",
+            "0.25",
+            "1.5e-05",
+        ] {
+            assert!(looks_like_numeric_literal(text), "{text:?} must read as a number");
+        }
+        for text in [
+            "1,2", "12,34", "1,2345", "1234,567", "1,234,56", ",123", "1,,234", "1,234,", ".", "1.2.3", "1.234,56",
+            "a,123", "",
+        ] {
+            assert!(!looks_like_numeric_literal(text), "{text:?} must not read as a number");
+        }
     }
 
     /// Build the reported fixture's transaction table content directly (xberg-io/xberg#1649):

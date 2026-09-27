@@ -13,7 +13,8 @@ use xberg::core::config::ExtractionConfig;
 /// blocks. ~keep
 const SCAN: &[u8] = include_bytes!("fixtures/ocr/right_aligned_amounts_scan.png");
 
-/// The grid as printed, with each nil dash read as an empty cell (see [`nil_as_empty`]).
+/// The grid as printed. Every amount column is numeric, so table normalisation empties each nil
+/// dash (GH#1914).
 const EXPECTED: [[&str; 6]; 7] = [
     ["Item", "Year 1", "Year 2", "Year 3", "Year 4", "Year 5"],
     ["Alpha", "7", "40,218,965", "2", "58,730,142", ""],
@@ -24,14 +25,6 @@ const EXPECTED: [[&str; 6]; 7] = [
     ["Foxtrot", "19", "8", "30,952,871", "6", "7,213,406"],
 ];
 
-/// A lone nil dash compares as an empty cell. Whether table normalisation empties a nil dash
-/// depends on how many of its column's amounts it reads as plain numbers, which is not what this
-/// test covers: it covers which row and column each amount lands in. ~keep
-fn nil_as_empty(cell: &str) -> &str {
-    let cell = cell.trim();
-    if cell == "-" { "" } else { cell }
-}
-
 #[test]
 fn every_amount_stays_in_its_row_and_column() {
     let document = extract_bytes_document_blocking(SCAN, "image/png", &ExtractionConfig::default())
@@ -40,7 +33,7 @@ fn every_amount_stays_in_its_row_and_column() {
     let cells: Vec<Vec<&str>> = table
         .cells
         .iter()
-        .map(|row| row.iter().map(|cell| nil_as_empty(cell)).collect())
+        .map(|row| row.iter().map(|cell| cell.trim()).collect())
         .collect();
 
     assert_eq!(cells, EXPECTED, "tables were: {:#?}", document.tables);
