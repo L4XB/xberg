@@ -3531,6 +3531,11 @@ args = [
 # simple-result call returns, so the C e2e recipe cannot infer the binding type from result_is_simple.
 raw_c_result_type = "uintptr_t"
 
+[crates.e2e.calls.pdf_page_count.overrides.go]
+# ~keep The Go binding returns the page count as a plain uint, not a pointer, so the Go e2e
+# recipe must not nil-check or dereference the result.
+result_is_pointer = false
+
 [crates.e2e.calls.extract_batch]
 function = "extract_batch"
 module = "xberg"

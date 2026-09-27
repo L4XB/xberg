@@ -60,6 +60,7 @@
     "c/ocr/ocr_paddle_backend.md",
     "c/ocr/vlm_ocr.md",
     "c/pdf/pdf_page_count_invalid.md",
+    "c/pdf/pdf_page_count_password.md",
     "c/pdf/pdf_page_count_valid.md",
     "c/plugin_api/clear_reranker_backends.md",
     "c/plugin_api/embedding_backends_clear.md",
@@ -157,6 +158,7 @@
     "csharp/ocr/ocr_paddle_backend.md",
     "csharp/ocr/vlm_ocr.md",
     "csharp/pdf/pdf_page_count_invalid.md",
+    "csharp/pdf/pdf_page_count_password.md",
     "csharp/pdf/pdf_page_count_valid.md",
     "csharp/plugin_api/clear_reranker_backends.md",
     "csharp/plugin_api/embedding_backends_clear.md",
@@ -254,6 +256,7 @@
     "dart/ocr/ocr_paddle_backend.md",
     "dart/ocr/vlm_ocr.md",
     "dart/pdf/pdf_page_count_invalid.md",
+    "dart/pdf/pdf_page_count_password.md",
     "dart/pdf/pdf_page_count_valid.md",
     "dart/plugin_api/clear_reranker_backends.md",
     "dart/plugin_api/embedding_backends_clear.md",
@@ -351,6 +354,7 @@
     "elixir/ocr/ocr_paddle_backend.md",
     "elixir/ocr/vlm_ocr.md",
     "elixir/pdf/pdf_page_count_invalid.md",
+    "elixir/pdf/pdf_page_count_password.md",
     "elixir/pdf/pdf_page_count_valid.md",
     "elixir/plugin_api/clear_reranker_backends.md",
     "elixir/plugin_api/embedding_backends_clear.md",
@@ -448,6 +452,7 @@
     "go/ocr/ocr_paddle_backend.md",
     "go/ocr/vlm_ocr.md",
     "go/pdf/pdf_page_count_invalid.md",
+    "go/pdf/pdf_page_count_password.md",
     "go/pdf/pdf_page_count_valid.md",
     "go/plugin_api/clear_reranker_backends.md",
     "go/plugin_api/embedding_backends_clear.md",
@@ -545,6 +550,7 @@
     "java/ocr/ocr_paddle_backend.md",
     "java/ocr/vlm_ocr.md",
     "java/pdf/pdf_page_count_invalid.md",
+    "java/pdf/pdf_page_count_password.md",
     "java/pdf/pdf_page_count_valid.md",
     "java/plugin_api/clear_reranker_backends.md",
     "java/plugin_api/embedding_backends_clear.md",
@@ -642,6 +648,7 @@
     "kotlin-android/ocr/ocr_paddle_backend.md",
     "kotlin-android/ocr/vlm_ocr.md",
     "kotlin-android/pdf/pdf_page_count_invalid.md",
+    "kotlin-android/pdf/pdf_page_count_password.md",
     "kotlin-android/pdf/pdf_page_count_valid.md",
     "kotlin-android/plugin_api/clear_reranker_backends.md",
     "kotlin-android/plugin_api/embedding_backends_clear.md",
@@ -739,6 +746,7 @@
     "php/ocr/ocr_paddle_backend.md",
     "php/ocr/vlm_ocr.md",
     "php/pdf/pdf_page_count_invalid.md",
+    "php/pdf/pdf_page_count_password.md",
     "php/pdf/pdf_page_count_valid.md",
     "php/plugin_api/clear_reranker_backends.md",
     "php/plugin_api/embedding_backends_clear.md",
@@ -836,6 +844,7 @@
     "python/ocr/ocr_paddle_backend.md",
     "python/ocr/vlm_ocr.md",
     "python/pdf/pdf_page_count_invalid.md",
+    "python/pdf/pdf_page_count_password.md",
     "python/pdf/pdf_page_count_valid.md",
     "python/plugin_api/clear_reranker_backends.md",
     "python/plugin_api/embedding_backends_clear.md",
@@ -933,6 +942,7 @@
     "ruby/ocr/ocr_paddle_backend.md",
     "ruby/ocr/vlm_ocr.md",
     "ruby/pdf/pdf_page_count_invalid.md",
+    "ruby/pdf/pdf_page_count_password.md",
     "ruby/pdf/pdf_page_count_valid.md",
     "ruby/plugin_api/clear_reranker_backends.md",
     "ruby/plugin_api/embedding_backends_clear.md",
@@ -1030,6 +1040,7 @@
     "rust/ocr/ocr_paddle_backend.md",
     "rust/ocr/vlm_ocr.md",
     "rust/pdf/pdf_page_count_invalid.md",
+    "rust/pdf/pdf_page_count_password.md",
     "rust/pdf/pdf_page_count_valid.md",
     "rust/plugin_api/clear_reranker_backends.md",
     "rust/plugin_api/embedding_backends_clear.md",
@@ -1139,6 +1150,7 @@
     "swift/ocr/ocr_paddle_backend.md",
     "swift/ocr/vlm_ocr.md",
     "swift/pdf/pdf_page_count_invalid.md",
+    "swift/pdf/pdf_page_count_password.md",
     "swift/pdf/pdf_page_count_valid.md",
     "swift/plugin_api/clear_reranker_backends.md",
     "swift/plugin_api/embedding_backends_clear.md",
@@ -1236,6 +1248,7 @@
     "typescript/ocr/ocr_paddle_backend.md",
     "typescript/ocr/vlm_ocr.md",
     "typescript/pdf/pdf_page_count_invalid.md",
+    "typescript/pdf/pdf_page_count_password.md",
     "typescript/pdf/pdf_page_count_valid.md",
     "typescript/plugin_api/clear_reranker_backends.md",
     "typescript/plugin_api/embedding_backends_clear.md",
@@ -1333,6 +1346,7 @@
     "wasm/ocr/ocr_paddle_backend.md",
     "wasm/ocr/vlm_ocr.md",
     "wasm/pdf/pdf_page_count_invalid.md",
+    "wasm/pdf/pdf_page_count_password.md",
     "wasm/pdf/pdf_page_count_valid.md",
     "wasm/plugin_api/clear_reranker_backends.md",
     "wasm/plugin_api/embedding_backends_clear.md",
@@ -1430,6 +1444,7 @@
     "zig/ocr/ocr_paddle_backend.md",
     "zig/ocr/vlm_ocr.md",
     "zig/pdf/pdf_page_count_invalid.md",
+    "zig/pdf/pdf_page_count_password.md",
     "zig/pdf/pdf_page_count_valid.md",
     "zig/plugin_api/clear_reranker_backends.md",
     "zig/plugin_api/embedding_backends_clear.md",
@@ -2172,6 +2187,18 @@
         "language": "c"
       },
       "path": "c/pdf/pdf_page_count_invalid.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "c"
+      },
+      "path": "c/pdf/pdf_page_count_password.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -3344,6 +3371,18 @@
     },
     {
       "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "csharp"
+      },
+      "path": "csharp/pdf/pdf_page_count_password.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "pdf_page_count_valid",
         "language": "csharp"
       },
@@ -4500,6 +4539,18 @@
         "language": "dart"
       },
       "path": "dart/pdf/pdf_page_count_invalid.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "dart"
+      },
+      "path": "dart/pdf/pdf_page_count_password.md",
       "language": "dart",
       "target": "dart",
       "session": "dart",
@@ -5672,6 +5723,18 @@
     },
     {
       "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "elixir"
+      },
+      "path": "elixir/pdf/pdf_page_count_password.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "pdf_page_count_valid",
         "language": "elixir"
       },
@@ -6828,6 +6891,18 @@
         "language": "go"
       },
       "path": "go/pdf/pdf_page_count_invalid.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "go"
+      },
+      "path": "go/pdf/pdf_page_count_password.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -8000,6 +8075,18 @@
     },
     {
       "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "java"
+      },
+      "path": "java/pdf/pdf_page_count_password.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "pdf_page_count_valid",
         "language": "java"
       },
@@ -9156,6 +9243,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/pdf/pdf_page_count_invalid.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/pdf/pdf_page_count_password.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -10328,6 +10427,18 @@
     },
     {
       "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "php"
+      },
+      "path": "php/pdf/pdf_page_count_password.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "pdf_page_count_valid",
         "language": "php"
       },
@@ -11492,6 +11603,18 @@
     },
     {
       "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "python"
+      },
+      "path": "python/pdf/pdf_page_count_password.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "pdf_page_count_valid",
         "language": "python"
       },
@@ -12648,6 +12771,18 @@
         "language": "ruby"
       },
       "path": "ruby/pdf/pdf_page_count_invalid.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "ruby"
+      },
+      "path": "ruby/pdf/pdf_page_count_password.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -13986,6 +14121,18 @@
         "language": "rust"
       },
       "path": "rust/pdf/pdf_page_count_invalid.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "rust"
+      },
+      "path": "rust/pdf/pdf_page_count_password.md",
       "language": "rust",
       "target": "rust",
       "session": "rust",
@@ -15350,6 +15497,18 @@
     },
     {
       "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "swift"
+      },
+      "path": "swift/pdf/pdf_page_count_password.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "pdf_page_count_valid",
         "language": "swift"
       },
@@ -16506,6 +16665,18 @@
         "language": "node"
       },
       "path": "typescript/pdf/pdf_page_count_invalid.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "node"
+      },
+      "path": "typescript/pdf/pdf_page_count_password.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -17678,6 +17849,18 @@
     },
     {
       "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "wasm"
+      },
+      "path": "wasm/pdf/pdf_page_count_password.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "pdf_page_count_valid",
         "language": "wasm"
       },
@@ -18834,6 +19017,18 @@
         "language": "zig"
       },
       "path": "zig/pdf/pdf_page_count_invalid.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "pdf_page_count_password",
+        "language": "zig"
+      },
+      "path": "zig/pdf/pdf_page_count_password.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -23560,6 +23755,66 @@
     },
     {
       "fixture_id": "pdf_page_count_invalid",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "c"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "go"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "java"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "node"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "php"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "python"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
       "language": "zig"
     },
     {
@@ -29430,6 +29685,66 @@
     },
     {
       "fixture_id": "pdf_page_count_invalid",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "c"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "go"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "java"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "node"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "php"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "python"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "pdf_page_count_password",
       "language": "zig"
     },
     {
