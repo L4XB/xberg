@@ -1054,6 +1054,22 @@ mod tests {
     }
 
     #[test]
+    fn median_height_takes_the_middle_of_an_odd_count() {
+        assert_eq!(median_height(vec![50, 10, 30]), 30);
+    }
+
+    #[test]
+    fn median_height_takes_the_upper_middle_of_an_even_count() {
+        assert_eq!(median_height(vec![40, 10, 30, 20]), 30);
+    }
+
+    #[test]
+    fn median_height_of_no_heights_is_zero() {
+        assert_eq!(median_height(Vec::new()), 0);
+        assert_eq!(median_word_height(&[]), 0);
+    }
+
+    #[test]
     fn test_detect_rows_zero_height_words_grouped_into_one_row() {
         let words = vec![
             HocrWord {

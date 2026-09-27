@@ -260,6 +260,16 @@ struct QuantityRetryColumn {
     cell_right: u32,
 }
 
+/// The words of a table region that reach table reconstruction, or `None` when the region has too
+/// few words to be a table. The minimum counts every word Tesseract read, before shading marks are
+/// dropped, so a dropped mark changes the cells of a table but never whether one is attempted. ~keep
+fn table_candidate_words(region_words: Vec<HocrWord>, row_threshold_ratio: f64) -> Option<Vec<HocrWord>> {
+    if region_words.len() < MIN_TABLE_CANDIDATE_WORDS {
+        return None;
+    }
+    Some(drop_shading_marks(region_words, row_threshold_ratio))
+}
+
 fn nearest_position_index(positions: &[u32], value: u32) -> Option<usize> {
     if positions.is_empty() {
         return None;
@@ -2063,17 +2073,17 @@ pub(super) fn perform_ocr(
         let regions = cluster_words_into_table_regions(&words);
 
         for (region_index, region_words) in regions.into_iter().enumerate() {
-            let mut region_words = drop_shading_marks(region_words, config.table_row_threshold_ratio);
-            if region_words.len() < MIN_TABLE_CANDIDATE_WORDS {
+            let word_count = region_words.len();
+            let Some(mut region_words) = table_candidate_words(region_words, config.table_row_threshold_ratio) else {
                 tracing::debug!(
                     target: "xberg::ocr::tables",
                     region_index,
-                    word_count = region_words.len(),
+                    word_count,
                     min_required = MIN_TABLE_CANDIDATE_WORDS,
                     "OCR table region skipped: below MIN_TABLE_CANDIDATE_WORDS"
                 );
                 continue;
-            }
+            };
 
             let region_left = region_words.iter().map(|w| w.left).min().unwrap_or(0);
             let region_top = region_words.iter().map(|w| w.top).min().unwrap_or(0);
@@ -2994,6 +3004,27 @@ mod tests {
             }
         }
         words
+    }
+
+    /// A row of `values` grid words plus one tall low-confidence `=` mark between the first two.
+    fn value_row_with_a_mark(values: u32) -> Vec<crate::table_core::HocrWord> {
+        let mut words = table_grid_words(0, 100, 1, values);
+        words.push(crate::table_core::HocrWord {
+            confidence: 10.0,
+            ..word_at(45, 88, 10, 45, "=")
+        });
+        words
+    }
+
+    #[test]
+    fn table_candidate_words_count_the_region_before_its_marks_are_dropped() {
+        let at_minimum = value_row_with_a_mark(MIN_TABLE_CANDIDATE_WORDS as u32 - 1);
+        let kept = table_candidate_words(at_minimum, 0.5).expect("a region at the minimum is a table candidate");
+        assert_eq!(kept.len(), MIN_TABLE_CANDIDATE_WORDS - 1, "the mark is dropped");
+        assert!(kept.iter().all(|word| word.text != "="));
+
+        let below_minimum = value_row_with_a_mark(MIN_TABLE_CANDIDATE_WORDS as u32 - 2);
+        assert!(table_candidate_words(below_minimum, 0.5).is_none());
     }
 
     #[test]

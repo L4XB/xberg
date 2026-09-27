@@ -140,7 +140,7 @@ fn underscore_mark_runs(chars: &[char]) -> Vec<Range<usize>> {
         .collect()
 }
 
-fn is_value(text: &[char]) -> bool {
+pub(super) fn is_value(text: &[char]) -> bool {
     text.iter().any(char::is_ascii_digit) && !text.iter().any(|ch| ch.is_alphabetic())
 }
 
