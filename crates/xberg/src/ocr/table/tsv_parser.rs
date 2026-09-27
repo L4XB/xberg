@@ -92,11 +92,13 @@ pub(crate) fn extract_table_words_from_tsv(
     let words = words_on_lines(tsv_data, min_confidence);
     let mut table_words = Vec::with_capacity(words.len());
     let mut lines = Vec::with_capacity(words.len());
+    let mut read_boxes = Vec::with_capacity(words.len());
     for (line, word) in words {
+        let read_box = word.clone();
         push_without_underscore_marks(word, symbols, &mut table_words);
         lines.resize(table_words.len(), line);
+        read_boxes.resize(table_words.len(), read_box);
     }
-    let read_boxes = table_words.clone();
     put_line_words_on_one_band(&mut table_words, &lines);
     Ok(TableWords {
         words: table_words,
@@ -110,34 +112,46 @@ pub(crate) struct TableWords {
     /// The words rows and columns are built from. Every word on one Tesseract text line has the
     /// vertical box of that line.
     pub(crate) words: Vec<HocrWord>,
-    /// The box Tesseract read for the word at the same index of `words`. The table bounding box
-    /// comes from these boxes because the text outside the table is picked by the centres of the
-    /// same boxes: a stretched edge-row word whose box `words` moved would otherwise fall outside
-    /// its own table and print twice (xberg-io/xberg#1834). ~keep
+    /// The box Tesseract read for the word at the same index of `words`: for a piece cut from a
+    /// word at an underscore mark, the box of the whole word. The table bounding box comes from
+    /// these boxes because the text outside the table is picked by the centres of the same boxes:
+    /// a stretched edge-row word whose box `words` moved, or an edge value whose mark was cut off,
+    /// would otherwise fall outside its own table and print twice (xberg-io/xberg#1834). ~keep
     pub(crate) read_boxes: Vec<HocrWord>,
 }
 
-/// Give every word on one Tesseract text line the vertical box of the line's word whose height
-/// is nearest the median word height (xberg-io/xberg#1834).
+/// Give the words on one Tesseract text line the vertical box, the band, of the line's word of
+/// typical height (xberg-io/xberg#1834).
 ///
 /// Table rows group words by the centre of their box. Shading can stretch one word's box over the
 /// row below, and its centre then passes the row threshold, so the word starts a row of its own
-/// while Tesseract reads it on one line with the rest of its label. The word of typical height is
-/// the one the shading did not stretch. ~keep
+/// while Tesseract reads it on one line with the rest of its label. The band is the box of the
+/// line's word whose height is nearest the median and between half and one and a half times the
+/// median. A word outside that range, such as a full stop or a box stretched over the next row,
+/// never sets it, and a line with no word in the range keeps its boxes. A word moves onto the band only when its own box overlaps the band, so a line that
+/// Tesseract runs across two table rows does not join them. ~keep
 fn put_line_words_on_one_band(words: &mut [HocrWord], lines: &[Option<TextLine>]) {
-    let median_height = median_word_height(words);
+    let median_height = u64::from(median_word_height(words));
+    let is_typical = |height: u32| (median_height..=3 * median_height).contains(&(2 * u64::from(height)));
     let mut bands: HashMap<TextLine, (u32, u32)> = HashMap::new();
     for (word, line) in words.iter().zip(lines) {
         let Some(line) = line else {
             continue;
         };
+        if !is_typical(word.height) {
+            continue;
+        }
+        let distance = |height: u32| u64::from(height).abs_diff(median_height);
         let band = bands.entry(*line).or_insert((word.top, word.height));
-        if word.height.abs_diff(median_height) < band.1.abs_diff(median_height) {
+        if distance(word.height) < distance(band.1) {
             *band = (word.top, word.height);
         }
     }
     for (word, line) in words.iter_mut().zip(lines) {
-        if let Some(&(top, height)) = line.as_ref().and_then(|line| bands.get(line)) {
+        if let Some(&(top, height)) = line.as_ref().and_then(|line| bands.get(line))
+            && word.top < top.saturating_add(height)
+            && top < word.top.saturating_add(word.height)
+        {
             word.top = top;
             word.height = height;
         }
@@ -519,6 +533,85 @@ mod tests {
             row_of("30"),
             "the typical word stays in the row of its values: {table:?}"
         );
+    }
+
+    /// Tesseract gives one text line to the words of two table rows. No word's box overlaps the
+    /// other row, so each row keeps its own boxes and the two rows stay apart.
+    #[test]
+    fn one_tesseract_line_over_two_table_rows_does_not_join_them() {
+        let tsv = format!(
+            "{TSV_HEADER}\
+5\t1\t1\t1\t1\t1\t100\t100\t90\t26\t90\tAlpha\n\
+5\t1\t1\t1\t1\t2\t600\t100\t60\t26\t90\t10\n\
+5\t1\t1\t1\t1\t3\t800\t100\t60\t26\t90\t20\n\
+5\t1\t1\t1\t1\t4\t100\t150\t90\t26\t90\tBravo\n\
+5\t1\t1\t1\t1\t5\t600\t150\t60\t26\t90\t30\n\
+5\t1\t1\t1\t1\t6\t800\t150\t60\t26\t90\t40\n\
+5\t1\t2\t1\t1\t1\t100\t200\t90\t26\t90\tCharlie\n\
+5\t1\t2\t1\t1\t2\t600\t200\t60\t26\t90\t50\n\
+5\t1\t2\t1\t1\t3\t800\t200\t60\t26\t90\t60\n"
+        );
+        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap().words;
+        assert_eq!(
+            crate::table_core::reconstruct_table(&words, 20, 0.5),
+            [["Alpha", "10", "20"], ["Bravo", "30", "40"], ["Charlie", "50", "60"]],
+            "each table row keeps its own boxes"
+        );
+    }
+
+    /// The `(text, top, height)` of each word on text line 1-9-1-1 after the band is applied. Two
+    /// rows of typical words on other lines set the median word height to 26.
+    fn line_boxes_after_banding(line_rows: &str) -> Vec<(String, u32, u32)> {
+        let tsv = format!(
+            "{TSV_HEADER}\
+5\t1\t1\t1\t1\t1\t100\t100\t90\t26\t90\tAlpha\n\
+5\t1\t1\t1\t1\t2\t600\t100\t60\t26\t90\t10\n\
+5\t1\t1\t1\t1\t3\t800\t100\t60\t26\t90\t20\n\
+5\t1\t2\t1\t1\t1\t100\t300\t90\t26\t90\tCharlie\n\
+5\t1\t2\t1\t1\t2\t600\t300\t60\t26\t90\t50\n\
+5\t1\t2\t1\t1\t3\t800\t300\t60\t26\t90\t60\n\
+{line_rows}"
+        );
+        let first_row = ["Alpha", "10", "20", "Charlie", "50", "60"];
+        extract_table_words_from_tsv(&tsv, 0.0, &[])
+            .unwrap()
+            .words
+            .into_iter()
+            .filter(|word| !first_row.contains(&word.text.as_str()))
+            .map(|word| (word.text, word.top, word.height))
+            .collect()
+    }
+
+    /// A stretched word, a short word, a word of typical height and a full stop on one line: the
+    /// band comes from the word of typical height, not from the shortest or tallest box.
+    #[test]
+    fn the_band_of_a_line_is_its_word_of_typical_height() {
+        let boxes = line_boxes_after_banding(
+            "5\t1\t9\t1\t1\t1\t100\t150\t90\t62\t90\tBravo\n\
+5\t1\t9\t1\t1\t2\t200\t158\t20\t18\t90\tof\n\
+5\t1\t9\t1\t1\t3\t230\t150\t80\t26\t90\tTail\n\
+5\t1\t9\t1\t1\t4\t320\t172\t4\t4\t90\t.\n",
+        );
+        assert_eq!(
+            boxes,
+            [
+                ("Bravo".to_string(), 150, 26),
+                ("of".to_string(), 150, 26),
+                ("Tail".to_string(), 150, 26),
+                (".".to_string(), 150, 26),
+            ]
+        );
+    }
+
+    /// A full stop beside a stretched word: neither is of typical height, so neither sets a band
+    /// and both keep their own boxes.
+    #[test]
+    fn a_line_with_no_word_of_typical_height_keeps_its_boxes() {
+        let boxes = line_boxes_after_banding(
+            "5\t1\t9\t1\t1\t1\t100\t150\t90\t62\t90\tBravo\n\
+5\t1\t9\t1\t1\t2\t195\t172\t4\t4\t90\t.\n",
+        );
+        assert_eq!(boxes, [("Bravo".to_string(), 150, 62), (".".to_string(), 172, 4)]);
     }
 
     /// A line number that does not parse is unknown, never line 0 shared with other words.

@@ -504,8 +504,9 @@ impl TableRegion {
         self.words.push(word);
     }
 
-    /// The box around the words as Tesseract read them. The text outside the table is picked by
-    /// the centres of the same boxes, so every word of the table falls inside it. ~keep
+    /// The box around the words as Tesseract read them, underscore marks included. The text
+    /// outside the table is picked by the centres of the same boxes, so every word of the table
+    /// falls inside it. ~keep
     fn bounding_box(&self) -> OcrTableBoundingBox {
         OcrTableBoundingBox {
             left: self.read_boxes.iter().map(|w| w.left).min().unwrap_or(0),
@@ -3094,6 +3095,49 @@ mod tests {
             content.matches("Charlie").count(),
             1,
             "the stretched word prints once, in the table: {content}"
+        );
+    }
+
+    /// A last-column value arrives with a long underscore mark fused on. The table cuts the mark
+    /// off, but the text rebuild reads the whole word, whose centre sits right of the value. The
+    /// bounding box covers the whole word, so the value prints once, in the table.
+    #[test]
+    fn an_edge_value_cut_from_its_underscore_mark_prints_once() {
+        let tsv = format!(
+            "{TSV_HEADER}\
+5\t1\t1\t1\t1\t1\t100\t100\t90\t26\t90\tAlpha\n\
+5\t1\t2\t1\t1\t1\t600\t100\t60\t26\t90\t10\n\
+5\t1\t3\t1\t1\t1\t800\t100\t60\t26\t90\t20\n\
+5\t1\t4\t1\t1\t1\t100\t150\t90\t26\t90\tBravo\n\
+5\t1\t5\t1\t1\t1\t600\t150\t60\t26\t90\t30\n\
+5\t1\t6\t1\t1\t1\t800\t150\t320\t26\t90\t47______________\n\
+5\t1\t7\t1\t1\t1\t100\t200\t90\t26\t90\tCharlie\n\
+5\t1\t8\t1\t1\t1\t600\t200\t60\t26\t90\t50\n\
+5\t1\t9\t1\t1\t1\t800\t200\t60\t26\t90\t60\n"
+        );
+        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap();
+        let regions = table_regions(&words);
+        assert_eq!(regions.len(), 1);
+        let region = &regions[0];
+        let cells = reconstruct_table_with_columns(&region.words, 20, 0.5).0;
+        let tables = [OcrTable {
+            markdown: table_to_markdown(&cells),
+            cells,
+            page_number: 1,
+            bounding_box: Some(region.bounding_box()),
+        }];
+
+        let content = build_content_with_inline_tables(&tsv, &tables, 0.0);
+
+        assert!(
+            tables[0].cells.iter().flatten().any(|cell| cell == "47"),
+            "the value sits in its table cell: {:?}",
+            tables[0].cells
+        );
+        assert_eq!(
+            content.matches("47").count(),
+            1,
+            "the value prints once, in the table: {content}"
         );
     }
 
