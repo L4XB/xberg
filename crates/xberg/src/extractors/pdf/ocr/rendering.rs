@@ -704,6 +704,11 @@ pub(super) async fn collect_xobject_recovery_result(
 /// Used when the page render came back blank (see [`page_needs_xobject_fallback`]) but the
 /// page does carry image XObjects the renderer could not paint (issue #1355/#1444).
 ///
+/// A page that is one full-page scan retries with the scan hints its render gets: the
+/// whole-image PSM and the known-scan signal that selects the default preprocessing, since its
+/// embedded image is that same scan (#1907). The rotation and DPI hints describe the page
+/// render, not the embedded image, so the retry does not carry them. ~keep
+///
 /// Returns `None` when the page has no recoverable image XObjects at all, so the caller can
 /// tell "nothing to try" apart from "tried and got nothing" and avoid warning about a page
 /// that was simply empty.
@@ -725,7 +730,9 @@ pub(super) async fn recover_page_text_from_image_xobjects(
     if fallback_images.is_empty() {
         return Ok(None);
     }
-    recover_image_xobjects(backend, &fallback_images, page_idx, ocr_config, budget)
+    let whole_page_raster = crate::pdf::scan_detect::full_page_raster_density(render_doc, page_idx).is_some();
+    let ocr_config = super::pipeline::ocr_config_with_page_rotation_hint(ocr_config, 0, None, whole_page_raster);
+    recover_image_xobjects(backend, &fallback_images, page_idx, &ocr_config, budget)
         .await
         .map(Some)
 }
