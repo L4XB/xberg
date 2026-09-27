@@ -48,23 +48,27 @@ fn bedrock_ocr_config(bedrock: Option<BedrockConfig>) -> ExtractionConfig {
 }
 
 /// A `bedrock/`-prefixed model with no explicit `BedrockConfig` credentials and
-/// no `AWS_ACCESS_KEY_ID` in the environment must be reported by `doctor` as a
+/// none of the credential variables liter-llm reads (`AWS_BEARER_TOKEN_BEDROCK`,
+/// `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) in the environment must be reported by `doctor` as a
 /// `Fail`, naming the missing AWS credentials — not silently pass, and not fail
 /// with a generic "backend not available" (which would mean the `vlm` backend,
 /// and therefore Bedrock SigV4 signing, never got compiled in at all).
 ///
-/// `#[serial]` because the test mutates the process-wide `AWS_ACCESS_KEY_ID`
-/// environment variable, matching the convention used by
+/// `#[serial]` because the test mutates those process-wide environment
+/// variables, matching the convention used by
 /// `xberg::llm::client`'s own equivalent unit test.
 #[allow(unsafe_code)]
 #[serial]
 #[test]
 fn test_doctor_reports_clear_failure_for_unconfigured_bedrock_model() {
-    let original = std::env::var("AWS_ACCESS_KEY_ID").ok();
+    const CREDENTIAL_VARS: [&str; 3] = ["AWS_BEARER_TOKEN_BEDROCK", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
+    let originals: Vec<Option<String>> = CREDENTIAL_VARS.iter().map(|name| std::env::var(name).ok()).collect();
     // SAFETY: guarded by #[serial] — no other test in this process observes
-    // AWS_ACCESS_KEY_ID concurrently while this one runs.
+    // these variables concurrently while this one runs.
     unsafe {
-        std::env::remove_var("AWS_ACCESS_KEY_ID");
+        for name in CREDENTIAL_VARS {
+            std::env::remove_var(name);
+        }
     }
 
     let config = bedrock_ocr_config(None);
@@ -72,9 +76,11 @@ fn test_doctor_reports_clear_failure_for_unconfigured_bedrock_model() {
 
     // SAFETY: see above.
     unsafe {
-        match &original {
-            Some(val) => std::env::set_var("AWS_ACCESS_KEY_ID", val),
-            None => std::env::remove_var("AWS_ACCESS_KEY_ID"),
+        for (name, original) in CREDENTIAL_VARS.iter().zip(&originals) {
+            match original {
+                Some(val) => std::env::set_var(name, val),
+                None => std::env::remove_var(name),
+            }
         }
     }
 
