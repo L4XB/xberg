@@ -128,8 +128,9 @@ pub(crate) struct TableWords {
 /// while Tesseract reads it on one line with the rest of its label. The band is the box of the
 /// line's word whose height is nearest the median and between half and one and a half times the
 /// median. A word outside that range, such as a full stop or a box stretched over the next row,
-/// never sets it, and a line with no word in the range keeps its boxes. A word moves onto the band only when its own box overlaps the band, so a line that
-/// Tesseract runs across two table rows does not join them. ~keep
+/// never sets it, and a line with no word in the range keeps its boxes. A word moves onto the band
+/// only when its own box overlaps the band, so a line that Tesseract runs across two table rows
+/// does not join them. ~keep
 fn put_line_words_on_one_band(words: &mut [HocrWord], lines: &[Option<TextLine>]) {
     let median_height = u64::from(median_word_height(words));
     let is_typical = |height: u32| (median_height..=3 * median_height).contains(&(2 * u64::from(height)));
@@ -544,6 +545,31 @@ mod tests {
 5\t1\t1\t1\t1\t1\t100\t120\t90\t26\t90\tAlpha\n\
 5\t1\t1\t1\t1\t2\t600\t120\t60\t26\t90\t10\n\
 5\t1\t1\t1\t1\t3\t800\t120\t60\t26\t90\t20\n\
+5\t1\t1\t1\t1\t4\t100\t170\t90\t26\t90\tBravo\n\
+5\t1\t1\t1\t1\t5\t600\t170\t60\t26\t90\t30\n\
+5\t1\t1\t1\t1\t6\t800\t170\t60\t26\t90\t40\n\
+5\t1\t2\t1\t1\t1\t100\t220\t90\t26\t90\tCharlie\n\
+5\t1\t2\t1\t1\t2\t600\t220\t60\t26\t90\t50\n\
+5\t1\t2\t1\t1\t3\t800\t220\t60\t26\t90\t60\n"
+        );
+        let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap().words;
+        assert_eq!(
+            crate::table_core::reconstruct_table(&words, 20, 0.5),
+            [["Alpha", "10", "20"], ["Bravo", "30", "40"], ["Charlie", "50", "60"]],
+            "each table row keeps its own boxes"
+        );
+    }
+
+    /// Tesseract gives one text line to the words of two table rows, and the band comes from the
+    /// lower row because its words are nearer the median height. The upper row lies wholly above
+    /// the band, so it keeps its own boxes and the two rows stay apart.
+    #[test]
+    fn a_line_band_taken_from_the_lower_row_does_not_join_two_table_rows() {
+        let tsv = format!(
+            "{TSV_HEADER}\
+5\t1\t1\t1\t1\t1\t100\t120\t90\t28\t90\tAlpha\n\
+5\t1\t1\t1\t1\t2\t600\t120\t60\t28\t90\t10\n\
+5\t1\t1\t1\t1\t3\t800\t120\t60\t28\t90\t20\n\
 5\t1\t1\t1\t1\t4\t100\t170\t90\t26\t90\tBravo\n\
 5\t1\t1\t1\t1\t5\t600\t170\t60\t26\t90\t30\n\
 5\t1\t1\t1\t1\t6\t800\t170\t60\t26\t90\t40\n\
