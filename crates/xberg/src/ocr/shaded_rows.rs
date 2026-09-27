@@ -192,11 +192,26 @@ fn padded_dark_band(gray: &[u8], width: i32, height: i32, band: (i32, i32, i32, 
 
 /// Inverts every dark band in place (white text on a dark fill becomes black text on
 /// white), over the box [`padded_dark_band`] grows for it. Mirrors `bands.py::invert_bands`.
+///
+/// Every box is grown on the page as scanned, and a pixel two boxes share is inverted once.
+/// One fill can be found as two bands when a text line's lower half thins the dark rows
+/// between them; the pads then meet over those rows, and inverting them twice put the fill
+/// back as a dark seam through the glyphs of the line. ~keep
 fn invert_dark_bands(gray: &mut [u8], width: i32, height: i32, bands: &[(i32, i32, i32, i32)]) {
-    for &band in bands {
-        let (y0, y1, x0, x1) = padded_dark_band(gray, width, height, band);
+    let boxes: Vec<(i32, i32, i32, i32)> = bands
+        .iter()
+        .map(|&band| padded_dark_band(gray, width, height, band))
+        .collect();
+    for (position, &(y0, y1, x0, x1)) in boxes.iter().enumerate() {
+        let earlier = &boxes[..position];
         for y in y0..y1 {
             for x in x0..x1 {
+                let already_inverted = earlier
+                    .iter()
+                    .any(|&(ey0, ey1, ex0, ex1)| (ey0..ey1).contains(&y) && (ex0..ex1).contains(&x));
+                if already_inverted {
+                    continue;
+                }
                 let index = (y * width + x) as usize;
                 gray[index] = 255 - gray[index];
             }
@@ -550,6 +565,38 @@ mod tests {
             255,
             "the paper above the band must not be inverted into a black rule"
         );
+    }
+
+    /// A dark fill found as two bands, because a text line's lower half thins the rows between
+    /// them below the dark-row fraction, must come out inverted once over those rows. Their pads
+    /// meet there, and a second inversion puts the fill back as a dark seam through the glyphs.
+    #[test]
+    fn should_invert_rows_two_dark_band_pads_share_only_once() {
+        let width = 200;
+        let height = 80;
+        let mut gray = synthetic_page(width, height);
+        // Rows 49 and 50 stand for the thinned rows: still fill, too light to count as dark.
+        for y in 49..51 {
+            for x in 0..width {
+                gray[(y * width + x) as usize] = 120;
+            }
+        }
+        let bands = find_dark_bands(&gray, width, height);
+        assert_eq!(
+            bands.len(),
+            2,
+            "the thinned rows must split the fill into two bands: {bands:?}"
+        );
+
+        invert_dark_bands(&mut gray, width, height, &bands);
+
+        for y in 49..51 {
+            assert_eq!(
+                gray[(y * width + 5) as usize],
+                135,
+                "row {y}, shared by both pads, must be inverted exactly once"
+            );
+        }
     }
 
     #[test]
