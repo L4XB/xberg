@@ -541,15 +541,15 @@ mod tests {
     fn one_tesseract_line_over_two_table_rows_does_not_join_them() {
         let tsv = format!(
             "{TSV_HEADER}\
-5\t1\t1\t1\t1\t1\t100\t100\t90\t26\t90\tAlpha\n\
-5\t1\t1\t1\t1\t2\t600\t100\t60\t26\t90\t10\n\
-5\t1\t1\t1\t1\t3\t800\t100\t60\t26\t90\t20\n\
-5\t1\t1\t1\t1\t4\t100\t150\t90\t26\t90\tBravo\n\
-5\t1\t1\t1\t1\t5\t600\t150\t60\t26\t90\t30\n\
-5\t1\t1\t1\t1\t6\t800\t150\t60\t26\t90\t40\n\
-5\t1\t2\t1\t1\t1\t100\t200\t90\t26\t90\tCharlie\n\
-5\t1\t2\t1\t1\t2\t600\t200\t60\t26\t90\t50\n\
-5\t1\t2\t1\t1\t3\t800\t200\t60\t26\t90\t60\n"
+5\t1\t1\t1\t1\t1\t100\t120\t90\t26\t90\tAlpha\n\
+5\t1\t1\t1\t1\t2\t600\t120\t60\t26\t90\t10\n\
+5\t1\t1\t1\t1\t3\t800\t120\t60\t26\t90\t20\n\
+5\t1\t1\t1\t1\t4\t100\t170\t90\t26\t90\tBravo\n\
+5\t1\t1\t1\t1\t5\t600\t170\t60\t26\t90\t30\n\
+5\t1\t1\t1\t1\t6\t800\t170\t60\t26\t90\t40\n\
+5\t1\t2\t1\t1\t1\t100\t220\t90\t26\t90\tCharlie\n\
+5\t1\t2\t1\t1\t2\t600\t220\t60\t26\t90\t50\n\
+5\t1\t2\t1\t1\t3\t800\t220\t60\t26\t90\t60\n"
         );
         let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap().words;
         assert_eq!(
@@ -564,12 +564,12 @@ mod tests {
     fn line_boxes_after_banding(line_rows: &str) -> Vec<(String, u32, u32)> {
         let tsv = format!(
             "{TSV_HEADER}\
-5\t1\t1\t1\t1\t1\t100\t100\t90\t26\t90\tAlpha\n\
-5\t1\t1\t1\t1\t2\t600\t100\t60\t26\t90\t10\n\
-5\t1\t1\t1\t1\t3\t800\t100\t60\t26\t90\t20\n\
-5\t1\t2\t1\t1\t1\t100\t300\t90\t26\t90\tCharlie\n\
-5\t1\t2\t1\t1\t2\t600\t300\t60\t26\t90\t50\n\
-5\t1\t2\t1\t1\t3\t800\t300\t60\t26\t90\t60\n\
+5\t1\t1\t1\t1\t1\t120\t100\t90\t26\t90\tAlpha\n\
+5\t1\t1\t1\t1\t2\t620\t100\t60\t26\t90\t10\n\
+5\t1\t1\t1\t1\t3\t820\t100\t60\t26\t90\t20\n\
+5\t1\t2\t1\t1\t1\t120\t300\t90\t26\t90\tCharlie\n\
+5\t1\t2\t1\t1\t2\t620\t300\t60\t26\t90\t50\n\
+5\t1\t2\t1\t1\t3\t820\t300\t60\t26\t90\t60\n\
 {line_rows}"
         );
         let first_row = ["Alpha", "10", "20", "Charlie", "50", "60"];
@@ -587,10 +587,10 @@ mod tests {
     #[test]
     fn the_band_of_a_line_is_its_word_of_typical_height() {
         let boxes = line_boxes_after_banding(
-            "5\t1\t9\t1\t1\t1\t100\t150\t90\t62\t90\tBravo\n\
-5\t1\t9\t1\t1\t2\t200\t158\t20\t18\t90\tof\n\
-5\t1\t9\t1\t1\t3\t230\t150\t80\t26\t90\tTail\n\
-5\t1\t9\t1\t1\t4\t320\t172\t4\t4\t90\t.\n",
+            "5\t1\t9\t1\t1\t1\t120\t150\t90\t62\t90\tBravo\n\
+5\t1\t9\t1\t1\t2\t220\t158\t20\t18\t90\tof\n\
+5\t1\t9\t1\t1\t3\t250\t150\t80\t26\t90\tTail\n\
+5\t1\t9\t1\t1\t4\t340\t172\t4\t4\t90\t.\n",
         );
         assert_eq!(
             boxes,
@@ -608,8 +608,8 @@ mod tests {
     #[test]
     fn a_line_with_no_word_of_typical_height_keeps_its_boxes() {
         let boxes = line_boxes_after_banding(
-            "5\t1\t9\t1\t1\t1\t100\t150\t90\t62\t90\tBravo\n\
-5\t1\t9\t1\t1\t2\t195\t172\t4\t4\t90\t.\n",
+            "5\t1\t9\t1\t1\t1\t120\t150\t90\t62\t90\tBravo\n\
+5\t1\t9\t1\t1\t2\t215\t172\t4\t4\t90\t.\n",
         );
         assert_eq!(boxes, [("Bravo".to_string(), 150, 62), (".".to_string(), 172, 4)]);
     }

@@ -3065,16 +3065,16 @@ mod tests {
     fn a_stretched_edge_row_word_is_inside_its_table_and_prints_once() {
         let tsv = format!(
             "{TSV_HEADER}\
-5\t1\t1\t1\t1\t1\t100\t100\t90\t26\t90\tAlpha\n\
-5\t1\t2\t1\t1\t1\t600\t100\t60\t26\t90\t10\n\
-5\t1\t3\t1\t1\t1\t800\t100\t60\t26\t90\t20\n\
-5\t1\t4\t1\t1\t1\t100\t150\t90\t26\t90\tBravo\n\
-5\t1\t5\t1\t1\t1\t600\t150\t60\t26\t90\t30\n\
-5\t1\t6\t1\t1\t1\t800\t150\t60\t26\t90\t40\n\
-5\t1\t7\t1\t1\t1\t100\t200\t100\t62\t90\tCharlie\n\
-5\t1\t7\t1\t1\t2\t210\t200\t80\t26\t90\tTail\n\
-5\t1\t8\t1\t1\t1\t600\t200\t60\t26\t90\t50\n\
-5\t1\t9\t1\t1\t1\t800\t200\t60\t26\t90\t60\n"
+5\t1\t1\t1\t1\t1\t100\t120\t90\t26\t90\tAlpha\n\
+5\t1\t2\t1\t1\t1\t600\t120\t60\t26\t90\t10\n\
+5\t1\t3\t1\t1\t1\t800\t120\t60\t26\t90\t20\n\
+5\t1\t4\t1\t1\t1\t100\t170\t90\t26\t90\tBravo\n\
+5\t1\t5\t1\t1\t1\t600\t170\t60\t26\t90\t30\n\
+5\t1\t6\t1\t1\t1\t800\t170\t60\t26\t90\t40\n\
+5\t1\t7\t1\t1\t1\t100\t220\t100\t62\t90\tCharlie\n\
+5\t1\t7\t1\t1\t2\t210\t220\t80\t26\t90\tTail\n\
+5\t1\t8\t1\t1\t1\t600\t220\t60\t26\t90\t50\n\
+5\t1\t9\t1\t1\t1\t800\t220\t60\t26\t90\t60\n"
         );
         let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap();
         let regions = table_regions(&words);
@@ -3105,15 +3105,15 @@ mod tests {
     fn an_edge_value_cut_from_its_underscore_mark_prints_once() {
         let tsv = format!(
             "{TSV_HEADER}\
-5\t1\t1\t1\t1\t1\t100\t100\t90\t26\t90\tAlpha\n\
-5\t1\t2\t1\t1\t1\t600\t100\t60\t26\t90\t10\n\
-5\t1\t3\t1\t1\t1\t800\t100\t60\t26\t90\t20\n\
-5\t1\t4\t1\t1\t1\t100\t150\t90\t26\t90\tBravo\n\
-5\t1\t5\t1\t1\t1\t600\t150\t60\t26\t90\t30\n\
-5\t1\t6\t1\t1\t1\t800\t150\t320\t26\t90\t47______________\n\
-5\t1\t7\t1\t1\t1\t100\t200\t90\t26\t90\tCharlie\n\
-5\t1\t8\t1\t1\t1\t600\t200\t60\t26\t90\t50\n\
-5\t1\t9\t1\t1\t1\t800\t200\t60\t26\t90\t60\n"
+5\t1\t1\t1\t1\t1\t100\t120\t90\t26\t90\tAlpha\n\
+5\t1\t2\t1\t1\t1\t600\t120\t60\t26\t90\t10\n\
+5\t1\t3\t1\t1\t1\t800\t120\t60\t26\t90\t20\n\
+5\t1\t4\t1\t1\t1\t100\t170\t90\t26\t90\tBravo\n\
+5\t1\t5\t1\t1\t1\t600\t170\t60\t26\t90\t30\n\
+5\t1\t6\t1\t1\t1\t800\t170\t320\t26\t90\t47______________\n\
+5\t1\t7\t1\t1\t1\t100\t220\t90\t26\t90\tCharlie\n\
+5\t1\t8\t1\t1\t1\t600\t220\t60\t26\t90\t50\n\
+5\t1\t9\t1\t1\t1\t800\t220\t60\t26\t90\t60\n"
         );
         let words = extract_table_words_from_tsv(&tsv, 0.0, &[]).unwrap();
         let regions = table_regions(&words);
