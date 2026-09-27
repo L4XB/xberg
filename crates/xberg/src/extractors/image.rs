@@ -1457,7 +1457,11 @@ fn encode_rgb_as_png(rgb_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>
     Ok(png.into_inner())
 }
 
-#[cfg(all(feature = "layout-detection", any(feature = "ocr", feature = "ocr-wasm")))]
+#[cfg(all(
+    feature = "layout-detection",
+    feature = "pdf",
+    any(feature = "ocr", feature = "ocr-wasm")
+))]
 fn uses_tatr_image_table_recognition(table_model: crate::core::config::layout::TableModel) -> bool {
     use crate::core::config::layout::TableModel;
 
@@ -4138,7 +4142,7 @@ mod tests {
         assert!(try_assemble_cached_layout_document(&whole, &detections, &[], 100, 100).is_none());
     }
 
-    #[cfg(all(feature = "layout-detection", feature = "ocr"))]
+    #[cfg(all(feature = "layout-detection", feature = "pdf", feature = "ocr"))]
     #[test]
     fn should_respect_disabled_and_preserve_slanet_fallback_for_image_tables() {
         use crate::core::config::layout::TableModel;
