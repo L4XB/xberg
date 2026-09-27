@@ -15,8 +15,13 @@
     paddle_ocr
 ))]
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use async_trait::async_trait;
 use xberg::XbergError;
 use xberg::core::config::{ExtractInput, ExtractionConfig, OcrConfig, OcrPipelineConfig, OcrPipelineStage};
+use xberg::plugins::{OcrBackend, OcrBackendType, Plugin, register_ocr_backend, unregister_ocr_backend};
 
 const PLAIN_TEXT: &str = "Plain text that needs no OCR.";
 
@@ -76,6 +81,18 @@ async fn should_fail_before_any_page_when_candle_backend_options_are_invalid() {
     .await;
 
     expect_validation_error(result, "candle-trocr backend_options");
+}
+
+#[tokio::test]
+async fn should_fail_before_any_page_when_trocr_hf_revision_is_blank() {
+    let result = extract_plain_text(OcrConfig {
+        backend: "candle-trocr".to_string(),
+        backend_options: Some(serde_json::json!({"hf_revision": "  "})),
+        ..Default::default()
+    })
+    .await;
+
+    expect_validation_error(result, "candle-trocr backend_options.hf_revision");
 }
 
 #[tokio::test]
@@ -168,13 +185,6 @@ async fn should_extract_when_backend_options_and_paddle_ocr_config_are_valid() {
 #[tokio::test]
 async fn should_keep_native_text_when_a_security_limit_rejects_a_scanned_page() {
     const REJECTING_MAX_CONTENT_SIZE: usize = 5_000;
-    let name = "mixed_native_scanned.pdf";
-    let bytes = std::fs::read(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/ocr")
-            .join(name),
-    )
-    .expect("fixture must exist");
     let config = ExtractionConfig {
         ocr: Some(OcrConfig {
             backend: "tesseract".to_string(),
@@ -187,13 +197,101 @@ async fn should_keep_native_text_when_a_security_limit_rejects_a_scanned_page() 
         ..Default::default()
     };
 
-    let result = xberg::extract(
+    let result = extract_mixed_native_scanned_pdf(&config)
+        .await
+        .expect("a per-page security-limit rejection must not fail the extraction");
+
+    expect_native_text_with_ocr_warning(&result, &REJECTING_MAX_CONTENT_SIZE.to_string());
+}
+
+const REJECTING_BACKEND: &str = "gh1829-rejecting-backend";
+const REJECTING_BACKEND_MESSAGE: &str = "gh1829 stub rejects this page";
+
+/// A backend whose every page call fails with a validation error, as a custom plugin backend
+/// does when it checks its own options on each page.
+struct RejectingOcrBackend {
+    called: Arc<AtomicBool>,
+}
+
+impl Plugin for RejectingOcrBackend {
+    fn name(&self) -> &str {
+        REJECTING_BACKEND
+    }
+
+    fn version(&self) -> String {
+        "1.0.0".to_string()
+    }
+
+    fn initialize(&self) -> xberg::Result<()> {
+        Ok(())
+    }
+
+    fn shutdown(&self) -> xberg::Result<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl OcrBackend for RejectingOcrBackend {
+    async fn process_image(&self, _image_bytes: &[u8], _config: &OcrConfig) -> xberg::Result<xberg::ExtractedDocument> {
+        self.called.store(true, Ordering::SeqCst);
+        Err(XbergError::Validation {
+            message: REJECTING_BACKEND_MESSAGE.to_string(),
+            source: None,
+        })
+    }
+
+    fn supports_language(&self, _language: &str) -> bool {
+        true
+    }
+
+    fn backend_type(&self) -> OcrBackendType {
+        OcrBackendType::Custom
+    }
+}
+
+/// A page error of the validation kind is still a per-page failure on the automatic route:
+/// the native text comes back with a warning, whatever kind of error the backend returns. ~keep
+#[tokio::test]
+async fn should_keep_native_text_when_a_backend_rejects_a_page_with_a_validation_error() {
+    let called = Arc::new(AtomicBool::new(false));
+    let _ = unregister_ocr_backend(REJECTING_BACKEND);
+    register_ocr_backend(Arc::new(RejectingOcrBackend {
+        called: Arc::clone(&called),
+    }))
+    .expect("the stub backend must register");
+    let config = ExtractionConfig {
+        ocr: Some(OcrConfig {
+            backend: REJECTING_BACKEND.to_string(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let result = extract_mixed_native_scanned_pdf(&config).await;
+    let _ = unregister_ocr_backend(REJECTING_BACKEND);
+
+    assert!(called.load(Ordering::SeqCst), "the scanned page must reach the backend");
+    let result = result.expect("a validation error on one page must not fail the extraction");
+    expect_native_text_with_ocr_warning(&result, REJECTING_BACKEND_MESSAGE);
+}
+
+async fn extract_mixed_native_scanned_pdf(config: &ExtractionConfig) -> xberg::Result<xberg::ExtractionResult> {
+    let name = "mixed_native_scanned.pdf";
+    let bytes = std::fs::read(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ocr")
+            .join(name),
+    )
+    .expect("fixture must exist");
+    xberg::extract(
         ExtractInput::from_bytes(bytes, "application/pdf", Some(name.to_string())),
-        &config,
+        config,
     )
     .await
-    .expect("a per-page security-limit rejection must not fail the extraction");
+}
 
+fn expect_native_text_with_ocr_warning(result: &xberg::ExtractionResult, needle: &str) {
     let doc = result.results.first().expect("one document");
     assert!(
         !doc.content.trim().is_empty(),
@@ -202,8 +300,8 @@ async fn should_keep_native_text_when_a_security_limit_rejects_a_scanned_page() 
     assert!(
         doc.processing_warnings
             .iter()
-            .any(|warning| warning.message.contains(&REJECTING_MAX_CONTENT_SIZE.to_string())),
-        "the page failure must surface as a warning citing the limit: {:?}",
+            .any(|warning| warning.message.contains(needle)),
+        "the page failure must surface as a warning citing {needle}: {:?}",
         doc.processing_warnings
     );
 }
