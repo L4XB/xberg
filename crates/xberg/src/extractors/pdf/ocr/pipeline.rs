@@ -299,6 +299,8 @@ pub(crate) async fn extract_mixed_ocr_native(
     let mut page_indices: Vec<usize> = ocr_set.iter().map(|&p| (p - 1) as usize).collect();
     page_indices.sort_unstable();
     let (render_doc, page_count, page_rotations) = open_pdf_for_page_ocr(content)?;
+    // Shared with each spawned pipeline task below, whose embedded-image retry reads it (#1912).
+    let render_doc = std::sync::Arc::new(render_doc);
     page_indices = valid_page_indices(&page_indices, page_count);
     if page_indices.is_empty() {
         return Ok((
@@ -532,6 +534,7 @@ pub(crate) async fn extract_mixed_ocr_native(
     let mut captured_rasters: Vec<crate::types::ExtractedImage> = Vec::new();
     let mut preprocessing_by_page: ahash::AHashMap<u32, crate::types::ImagePreprocessingMetadata> =
         ahash::AHashMap::new();
+    let mut xobject_recovery_budget = crate::extractors::security::SecurityBudget::from_config(config);
     for batch_start in (0..total).step_by(batch_size) {
         let batch_end = (batch_start + batch_size).min(total);
         let default_security_limits = crate::extractors::security::SecurityLimits::default();
@@ -562,6 +565,7 @@ pub(crate) async fn extract_mixed_ocr_native(
                         break;
                     }
                     let image_arc = Arc::clone(image);
+                    let render_doc_clone = Arc::clone(&render_doc);
                     let pipeline_clone = pipeline.clone();
                     let config_clone = config.clone();
                     let idx = *page_idx;
@@ -614,6 +618,7 @@ pub(crate) async fn extract_mixed_ocr_native(
                             true,
                             points_per_pixel_override,
                             idx,
+                            Some(render_doc_clone.as_ref()),
                         ))
                         .await;
                         (idx, result)
@@ -737,6 +742,7 @@ pub(crate) async fn extract_mixed_ocr_native(
                         true,
                         points_per_pixel_override,
                         *page_idx,
+                        Some(render_doc.as_ref()),
                     ))
                     .await?;
                     accumulated_llm_usage.extend(usage);
@@ -866,6 +872,8 @@ pub(crate) async fn extract_mixed_ocr_native(
             .collect();
         let encoded = encoded?;
         drop(page_images);
+        // A page whose backend call failed waits here for the embedded-image retry below.
+        let mut failed_pages: ahash::AHashMap<usize, crate::XbergError> = ahash::AHashMap::new();
 
         // `tokio::task::JoinSet::spawn` requires `Send` futures, but extractor/backend futures
         // are `!Send` on wasm32 (async_trait(?Send), see plugins/extractor/trait.rs) — and
@@ -923,7 +931,14 @@ pub(crate) async fn extract_mixed_ocr_native(
                         message: format!("OCR task panicked: {}", e),
                         plugin_name: "ocr".to_string(),
                     })?;
-                let mut extraction_result = result?;
+                let mut extraction_result = match result {
+                    Ok(extraction_result) => extraction_result,
+                    Err(error @ crate::XbergError::Cancelled) => return Err(error),
+                    Err(error) => {
+                        failed_pages.insert(page_idx, error);
+                        continue;
+                    }
+                };
                 if let Some(metadata) = extraction_result.metadata.image_preprocessing.clone() {
                     preprocessing_by_page.insert((page_idx + 1) as u32, metadata);
                 }
@@ -1024,9 +1039,17 @@ pub(crate) async fn extract_mixed_ocr_native(
                     orientation_handling,
                     config.security_limits.as_ref(),
                 )?;
-                let mut extraction_result = backend
+                let mut extraction_result = match backend
                     .process_image(upright_data.as_slice(), config_for_page.as_ref())
-                    .await?;
+                    .await
+                {
+                    Ok(extraction_result) => extraction_result,
+                    Err(error @ crate::XbergError::Cancelled) => return Err(error),
+                    Err(error) => {
+                        failed_pages.insert(*page_idx, error);
+                        continue;
+                    }
+                };
                 if let Some(metadata) = extraction_result.metadata.image_preprocessing.clone() {
                     preprocessing_by_page.insert((*page_idx + 1) as u32, metadata);
                 }
@@ -1090,6 +1113,79 @@ pub(crate) async fn extract_mixed_ocr_native(
                     page_dictionary_invalid_word_ratio.insert((*page_idx + 1) as u32, ratio);
                 }
                 ocr_results.insert((*page_idx + 1) as u32, extraction_result.content);
+            }
+        }
+
+        // A page whose OCR came back blank or failed is retried on its embedded image XObjects,
+        // as the whole-document route does (#1355, #1444). The pipeline branch above gets the
+        // same retry inside each stage, from the document it hands the runner (#1912).
+        for (page_idx, png, _, _) in &encoded {
+            let page_number = (page_idx + 1) as u32;
+            let failure = failed_pages.remove(page_idx);
+            let page_text = ocr_results.get(&page_number).map_or("", String::as_str);
+            let trigger = page_needs_xobject_fallback(page_text, png, security_limits);
+            let recovery = if trigger.needs_fallback {
+                recover_page_text_from_image_xobjects(
+                    backend,
+                    &render_doc,
+                    *page_idx,
+                    &ocr_config_owned,
+                    &mut xobject_recovery_budget,
+                )
+                .await?
+            } else {
+                None
+            };
+            let mut recovered = false;
+            if let Some(XObjectRecoveryOutcome {
+                text,
+                attempted,
+                images,
+                mut llm_usage,
+                tables,
+                mut formulas,
+                image_preprocessing,
+            }) = recovery
+            {
+                if should_adopt_xobject_retry_text(page_text, &text) {
+                    // The render's paragraphs, confidence and word count describe the blank
+                    // render, not the recovered text.
+                    ocr_page_paragraphs.remove(&page_number);
+                    page_mean_confidence.remove(&page_number);
+                    page_word_count.remove(&page_number);
+                    page_dictionary_invalid_word_ratio.remove(&page_number);
+                    structured_ocr_pages.insert(page_number, super::document::flat_ocr_page_document(&text));
+                    ocr_results.insert(page_number, text);
+                    recovered = true;
+                }
+                if !tables.is_empty() {
+                    let current_text = ocr_results.get(&page_number).map_or("", String::as_str);
+                    let page_doc = structured_ocr_pages
+                        .entry(page_number)
+                        .or_insert_with(|| super::document::flat_ocr_page_document(current_text));
+                    super::document::attach_page_ocr_payload(page_doc, tables, Vec::new(), page_number);
+                }
+                accumulated_llm_usage.append(&mut llm_usage);
+                accumulated_formulas.append(&mut formulas);
+                if let Some(metadata) = image_preprocessing {
+                    preprocessing_by_page.insert(page_number, metadata);
+                }
+                if capture_rasters {
+                    captured_rasters.extend(images);
+                }
+                accumulated_warnings.push(xobject_fallback_warning(*page_idx, attempted, trigger.draw_failed));
+            }
+            if let Some(error) = failure {
+                if !recovered {
+                    return Err(error);
+                }
+                accumulated_warnings.push(crate::types::ProcessingWarning {
+                    source: std::borrow::Cow::Borrowed("ocr"),
+                    message: std::borrow::Cow::Owned(format!(
+                        "OCR of page {page_number} failed ({error}); its text was recovered from the page's \
+                         embedded image XObjects instead."
+                    )),
+                });
             }
         }
 
@@ -1350,6 +1446,7 @@ pub(crate) async fn extract_with_ocr(
         false,
         None,
         0,
+        None,
     ))
     .await?;
     Ok((
@@ -1401,6 +1498,10 @@ pub(crate) async fn extract_with_ocr(
 /// `page_index_offset` maps this function's local image indices back to document page
 /// indices when a caller supplies a detached page image. It affects externally visible page
 /// identity only; internal vectors remain indexed from zero.
+///
+/// `xobject_document` -- the open document a detached page image came from. Only the
+/// embedded-image retry reads it, at `page_index_offset`, so a caller that hands in a
+/// detached page without `content` still gets the retry of a blank or failed page (#1912).
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 // Each parameter is independently documented above and forwarded verbatim by every caller
 // (see `run_ocr_pipeline_for_page`); bundling them into a params struct would only move the
@@ -1418,6 +1519,7 @@ pub(super) async fn extract_with_ocr_for_page(
     skip_document_global_heuristic: bool,
     points_per_pixel_override: Option<f32>,
     page_index_offset: usize,
+    xobject_document: Option<&xberg_native_pdf::PdfDocument>,
 ) -> crate::Result<(
     String,
     Option<f64>,
@@ -2212,7 +2314,7 @@ pub(super) async fn extract_with_ocr_for_page(
                 // points-per-pixel lookups that state is indexed for (#1444).
                 let render_doc = match lazy_pdf_render_state.as_ref() {
                     Some((doc, _, _)) => Some(doc),
-                    None => fallback_render_document(&mut fallback_pdf_state, content),
+                    None => xobject_document.or_else(|| fallback_render_document(&mut fallback_pdf_state, content)),
                 };
                 if let Some(render_doc) = render_doc
                     && let Some(recovery) = recover_page_text_from_image_xobjects(
@@ -3530,6 +3632,7 @@ pub(crate) async fn run_ocr_pipeline(
         false,
         None,
         0,
+        None,
     ))
     .await?;
     Ok((
@@ -3581,6 +3684,7 @@ pub(super) async fn run_ocr_pipeline_for_page(
     skip_document_global_heuristic: bool,
     points_per_pixel_override: Option<f32>,
     page_index_offset: usize,
+    xobject_document: Option<&xberg_native_pdf::PdfDocument>,
 ) -> crate::Result<(
     String,
     Vec<crate::types::Table>,
@@ -3697,6 +3801,7 @@ pub(super) async fn run_ocr_pipeline_for_page(
             skip_document_global_heuristic,
             points_per_pixel_override,
             page_index_offset,
+            xobject_document,
         ))
         .await;
 

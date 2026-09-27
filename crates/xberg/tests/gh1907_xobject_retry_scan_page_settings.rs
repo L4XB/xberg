@@ -11,8 +11,7 @@
 //! extracted embedded images is off, so the retry is the only call that sees the raster.
 //!
 //! Every case runs `force_ocr` with one Tesseract pipeline stage, which keeps PaddleOCR out
-//! when it is compiled in. The per-page routes (`force_ocr_pages`, scanned pages) do not run
-//! this retry at all.
+//! when it is compiled in.
 
 #![cfg(all(feature = "pdf", feature = "ocr"))]
 
