@@ -277,14 +277,16 @@ fn split_by_right_edge<'a>(
     (!parts.iter().any(|part| shares_a_row(part, row_positions))).then_some(parts)
 }
 
-/// Whether `group` has a token below the header row and every such token is a value. Row 0, the
-/// header row, is not read: a column's header label is text by nature.
-fn holds_only_values_below_header(group: &[&HocrWord], row_positions: &[u32]) -> bool {
-    let mut data_tokens = group
+/// Whether `group` reads as values: its tokens below the header row when it has any, else its
+/// header tokens. Row 0 is not read when data rows are present: a column's header label is text by
+/// nature. A header-only group reads as values only when its label is one, such as a year.
+fn reads_as_values(group: &[&HocrWord], row_positions: &[u32]) -> bool {
+    let (header, data): (Vec<&HocrWord>, Vec<&HocrWord>) = group
         .iter()
-        .filter(|word| find_row_index(row_positions, word) != Some(0))
-        .peekable();
-    data_tokens.peek().is_some() && data_tokens.all(|word| is_cell_value_text(&word.text))
+        .copied()
+        .partition(|word| find_row_index(row_positions, word) == Some(0));
+    let tokens = if data.is_empty() { header } else { data };
+    !tokens.is_empty() && tokens.iter().all(|word| is_cell_value_text(&word.text))
 }
 
 /// The column one group of tokens forms.
@@ -292,13 +294,13 @@ fn holds_only_values_below_header(group: &[&HocrWord], row_positions: &[u32]) ->
 /// The fold test reads the data tokens only. A header label sits on the left edge of the values it
 /// labels, so it joins one of their left-edge groups, and reading its text as well would stop that
 /// group from folding with the rest of its column. A group with no data token is a header-only
-/// track and never folds (xberg-io/xberg#1909). ~keep
+/// track: it folds only when its label is a value, such as a year (xberg-io/xberg#1909). ~keep
 fn column_track(group: &[&HocrWord], row_positions: &[u32]) -> ColumnTrack {
     let left = median_of(group.iter().map(|word| word.left).collect());
     ColumnTrack {
         left,
         right: median_of(group.iter().map(|word| right_edge(word)).collect()),
-        right_aligned: holds_only_values_below_header(group, row_positions),
+        right_aligned: reads_as_values(group, row_positions),
         lefts: vec![left],
     }
 }
@@ -315,8 +317,8 @@ fn column_track(group: &[&HocrWord], row_positions: &[u32]) -> ColumnTrack {
 /// Raising `column_threshold` is not the alternative — it merges genuinely narrow neighbouring
 /// columns (the GH#1649 `DEPOSIT` case). Both sides must hold only values in their data rows, so a
 /// text column and a column with any label below the header are never folded. A header-only track
-/// never folds either, which keeps it for the header-fragment merge; a header word clustered with
-/// data values does not stop them folding (see [`column_track`]). ~keep
+/// with a text label never folds either, which keeps it for the header-fragment merge; a header
+/// word clustered with data values does not stop them folding (see [`column_track`]). ~keep
 fn fold_right_aligned_tracks(columns: &mut Vec<ColumnTrack>, column_threshold: u32) {
     let mut index = 0;
     while index + 1 < columns.len() {
@@ -2556,6 +2558,40 @@ mod tests {
                 vec!["A".to_string(), "7".to_string(), "40,218,965".to_string()],
                 vec!["B".to_string(), "12,345,678".to_string(), "4".to_string()],
                 vec!["C".to_string(), "5".to_string(), "17,382,649".to_string()],
+            ]
+        );
+    }
+
+    /// xberg-io/xberg#1909: a header label that reads as a value, such as a year, can start more
+    /// than the threshold right of its column's long amounts and form a header-only track. Its right
+    /// edge is the column's right edge, so it folds with the column as it did before the fold test
+    /// read data tokens only.
+    ///
+    /// TEST HONESTY: when a header-only track never folds, the year keeps its own column between
+    /// the long amounts and the one-digit amount, and every row spreads over four columns, such as
+    /// `["B", "", "", "5"]`.
+    #[test]
+    fn issue_1909_a_value_header_only_track_folds_with_its_amount_column() {
+        let words = vec![
+            word("Item", 0, 0, 60, 20),
+            word("2023", 420, 0, 80, 20),
+            word("A", 0, 60, 60, 20),
+            word("12,345,678", 330, 60, 170, 20),
+            word("B", 0, 120, 60, 20),
+            word("5", 485, 120, 15, 20),
+            word("C", 0, 180, 60, 20),
+            word("40,218,965", 330, 180, 170, 20),
+        ];
+
+        let table = reconstruct_table(&words, 50, 0.5);
+
+        assert_eq!(
+            table,
+            vec![
+                vec!["Item".to_string(), "2023".to_string()],
+                vec!["A".to_string(), "12,345,678".to_string()],
+                vec!["B".to_string(), "5".to_string()],
+                vec!["C".to_string(), "40,218,965".to_string()],
             ]
         );
     }
