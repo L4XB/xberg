@@ -778,6 +778,19 @@ fn full_page_raster_density_reads_the_scan_density_and_ignores_figures() {
         20,
     ))
     .unwrap();
+    let figure_text = figure
+        .extract_page_text_with_options(0, ReadingOrder::ColumnAware)
+        .expect("extract mapped figure text");
+    let mapped_glyphs = figure_text
+        .spans
+        .iter()
+        .filter(|span| span.provenance != Some(MappingProvenance::Fallback))
+        .map(|span| span.text.chars().count())
+        .sum::<usize>();
+    assert!(
+        mapped_glyphs > OCR_SCAN_MAX_GLYPHS,
+        "negative control must exceed the readable-glyph cutoff; got {mapped_glyphs}"
+    );
     assert_eq!(
         full_page_raster_density(&figure, 0),
         None,
