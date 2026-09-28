@@ -253,14 +253,7 @@ fn repair_numeric_tokens_in_table(table: &mut crate::types::Table) {
 /// Page numbers must be >= 1 (invalid values are filtered out with a warning).
 /// An `ocr` config is recommended but not required; defaults are used if absent.
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
-pub(crate) async fn extract_mixed_ocr_native(
-    native_text: &str,
-    boundaries: &[crate::types::PageBoundary],
-    ocr_page_numbers: &[u32],
-    content: &[u8],
-    config: &ExtractionConfig,
-    _path: Option<&std::path::Path>,
-) -> crate::Result<(
+type MixedOcrResult = crate::Result<(
     String,
     ahash::AHashMap<u32, String>,
     ahash::AHashMap<u32, crate::types::internal::InternalDocument>,
@@ -270,7 +263,68 @@ pub(crate) async fn extract_mixed_ocr_native(
     ahash::AHashMap<u32, crate::types::ImagePreprocessingMetadata>,
     ahash::AHashMap<u32, crate::types::page::PageOcrConfidence>,
     Vec<crate::types::ProcessingWarning>,
-)> {
+)>;
+
+#[cfg(all(
+    any(feature = "ocr", feature = "ocr-pipeline"),
+    feature = "pdf",
+    feature = "layout-detection"
+))]
+enum MixedLayoutInputs {
+    Resolve,
+    Prepared(Option<PreparedLayoutInputs>),
+}
+
+#[cfg(all(
+    any(feature = "ocr", feature = "ocr-pipeline"),
+    feature = "pdf",
+    feature = "layout-detection"
+))]
+type PreparedLayoutInputs = (Vec<image::DynamicImage>, Vec<crate::layout::DetectionResult>);
+
+#[cfg(all(
+    any(feature = "ocr", feature = "ocr-pipeline"),
+    feature = "pdf",
+    feature = "layout-detection"
+))]
+type MixedLayoutOutcome = (
+    Option<PreparedLayoutInputs>,
+    Option<crate::types::ProcessingWarning>,
+    Vec<crate::types::ProcessingWarning>,
+);
+
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+pub(crate) async fn extract_mixed_ocr_native(
+    native_text: &str,
+    boundaries: &[crate::types::PageBoundary],
+    ocr_page_numbers: &[u32],
+    content: &[u8],
+    config: &ExtractionConfig,
+    path: Option<&std::path::Path>,
+) -> MixedOcrResult {
+    extract_mixed_ocr_native_with_layout_inputs(
+        native_text,
+        boundaries,
+        ocr_page_numbers,
+        content,
+        config,
+        path,
+        #[cfg(feature = "layout-detection")]
+        MixedLayoutInputs::Resolve,
+    )
+    .await
+}
+
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+async fn extract_mixed_ocr_native_with_layout_inputs(
+    native_text: &str,
+    boundaries: &[crate::types::PageBoundary],
+    ocr_page_numbers: &[u32],
+    content: &[u8],
+    config: &ExtractionConfig,
+    _path: Option<&std::path::Path>,
+    #[cfg(feature = "layout-detection")] layout_inputs: MixedLayoutInputs,
+) -> MixedOcrResult {
     let ocr_set: std::collections::HashSet<u32> = ocr_page_numbers
         .iter()
         .copied()
@@ -321,75 +375,81 @@ pub(crate) async fn extract_mixed_ocr_native(
     // Layout detection for this mixed OCR route (#665). The full-document OCR routes
     // (`force_ocr`, the OCR-gate fallback) already run layout via `run_ocr_with_layout` ->
     // `layout_runner::run_layout_for_ocr`, keyed on `config.resolved_layout_config()` (i.e.
-    // `config.layout` being set, which `--layout` alone does). This route never called that:
-    // it built `structured_ocr_pages` straight from raw backend OCR output, so `--layout`
-    // alone produced byte-identical text with zero layout log lines even though layout
-    // detection is what should be classifying headings/lists/tables here. Runs the exact
-    // same whole-document pass (`RenderWithoutInference`: every page renders, gated pages
-    // skip inference, CPU-retry-on-accelerated-failure) the full-document routes use; only
-    // the pages this call actually OCRs read from the result below. `page_idx` throughout
-    // this function is the same document-wide 0-based index `run_layout_for_ocr`'s per-page
-    // `Vec` is indexed by, so `detections.get(page_idx)` needs no extra alignment step.
+    // `config.layout` being set, which `--layout` alone does). Reuse the resolved layout outcome
+    // supplied by a whole-document caller, including `None` when its gate skipped every page or
+    // the pass soft-failed; otherwise run the pass here for a selected-page call. This prevents
+    // duplicate layout work while keeping selected-page layout classification. `page_idx` is the
+    // document-wide 0-based index the layout pass uses. ~keep
     #[cfg(feature = "layout-detection")]
-    let (layout_detections_for_mixed, layout_pass_warning, layout_pass_glyph_drop_warnings): (
-        Option<Vec<crate::layout::DetectionResult>>,
-        Option<crate::types::ProcessingWarning>,
-        Vec<crate::types::ProcessingWarning>,
-    ) = if let Some(layout_config) = config.resolved_layout_config() {
-        let layout_thread_budget = crate::core::config::concurrency::resolve_thread_budget(config.concurrency.as_ref());
-        let default_security_limits = crate::extractors::security::SecurityLimits::default();
-        let security_limits = config.security_limits.as_ref().unwrap_or(&default_security_limits);
-        match super::super::layout_runner::run_layout_for_ocr(
-            content,
-            layout_config.as_ref(),
-            layout_thread_budget,
-            security_limits,
-            config.images.as_ref(),
-        )
-        .await
-        {
-            Ok((
-                super::super::layout_runner::LayoutAttempt {
-                    output:
-                        super::super::layout_runner::LayoutRunOutput {
-                            data: Some((_, _, _, detections)),
-                            ..
-                        },
+    let (layout_inputs_for_mixed, layout_pass_warning, layout_pass_glyph_drop_warnings): MixedLayoutOutcome =
+        if let MixedLayoutInputs::Prepared(inputs) = layout_inputs {
+            (inputs, None, Vec::new())
+        } else if let Some(layout_config) = config.resolved_layout_config() {
+            let layout_thread_budget =
+                crate::core::config::concurrency::resolve_thread_budget(config.concurrency.as_ref());
+            let default_security_limits = crate::extractors::security::SecurityLimits::default();
+            let security_limits = config.security_limits.as_ref().unwrap_or(&default_security_limits);
+            match super::super::layout_runner::run_layout_for_ocr(
+                content,
+                layout_config.as_ref(),
+                layout_thread_budget,
+                security_limits,
+                config.images.as_ref(),
+            )
+            .await
+            {
+                Ok((
+                    super::super::layout_runner::LayoutAttempt {
+                        output:
+                            super::super::layout_runner::LayoutRunOutput {
+                                data: Some((images, _, _, detections)),
+                                ..
+                            },
+                        warning,
+                        ..
+                    },
+                    glyph_drop_warnings,
+                )) => (
+                    Some(super::super::prepare_ocr_layout_inputs(images, detections)),
                     warning,
-                    ..
-                },
-                glyph_drop_warnings,
-            )) => (Some(detections), warning, glyph_drop_warnings),
-            Ok((
-                super::super::layout_runner::LayoutAttempt {
-                    output: super::super::layout_runner::LayoutRunOutput { data: None, .. },
-                    warning,
-                    ..
-                },
-                glyph_drop_warnings,
-            )) => {
-                tracing::info!(
-                    "OCR layout (mixed route): auto gate skipped every page, continuing without layout assembly"
-                );
-                (None, warning, glyph_drop_warnings)
+                    glyph_drop_warnings,
+                ),
+                Ok((
+                    super::super::layout_runner::LayoutAttempt {
+                        output: super::super::layout_runner::LayoutRunOutput { data: None, .. },
+                        warning,
+                        ..
+                    },
+                    glyph_drop_warnings,
+                )) => {
+                    tracing::info!(
+                        "OCR layout (mixed route): auto gate skipped every page, continuing without layout assembly"
+                    );
+                    (None, warning, glyph_drop_warnings)
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "OCR layout detection failed for mixed OCR route; continuing without layout assembly"
+                    );
+                    (
+                        None,
+                        Some(super::super::layout_runner::layout_failure_warning(&error)),
+                        Vec::new(),
+                    )
+                }
             }
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "OCR layout detection failed for mixed OCR route; continuing without layout assembly"
-                );
-                (
-                    None,
-                    Some(super::super::layout_runner::layout_failure_warning(&error)),
-                    Vec::new(),
-                )
-            }
-        }
-    } else {
-        (None, None, Vec::new())
-    };
+        } else {
+            (None, None, Vec::new())
+        };
     #[cfg(feature = "layout-detection")]
-    let mixed_route_layout_active = layout_detections_for_mixed.is_some();
+    let layout_detections_for_mixed = layout_inputs_for_mixed
+        .as_ref()
+        .map(|(_, detections)| detections.as_slice());
+    #[cfg(feature = "layout-detection")]
+    let layout_images_for_mixed = layout_inputs_for_mixed.as_ref().map(|(images, _)| images.as_slice());
+    #[cfg(feature = "layout-detection")]
+    let mixed_route_layout_active = layout_inputs_for_mixed.is_some();
     #[cfg(not(feature = "layout-detection"))]
     let mixed_route_layout_active = false;
 
@@ -480,6 +540,16 @@ pub(crate) async fn extract_mixed_ocr_native(
     } else {
         None
     };
+    // Each invocation below owns exactly one page. Page markers belong to the outer document
+    // assembly; leaving them enabled here both stamps every detached page as page 1 and lets a
+    // marker make an empty primary stage look good enough to suppress its fallback (#1931). ~keep
+    let pipeline_stage_config = effective_pipeline.as_ref().map(|_| {
+        let mut stage_config = config.clone();
+        if let Some(pages) = stage_config.pages.as_mut() {
+            pages.insert_page_markers = false;
+        }
+        stage_config
+    });
 
     // The top-level `backend` registry lookup is only needed by the single-backend
     // route below; the pipeline route resolves each of its own stage backends
@@ -538,6 +608,31 @@ pub(crate) async fn extract_mixed_ocr_native(
         let batch_end = (batch_start + batch_size).min(total);
         let default_security_limits = crate::extractors::security::SecurityLimits::default();
         let security_limits = config.security_limits.as_ref().unwrap_or(&default_security_limits);
+        #[cfg(feature = "layout-detection")]
+        let page_images = if let Some(images) = layout_images_for_mixed {
+            page_indices[batch_start..batch_end]
+                .iter()
+                .map(|&page_idx| {
+                    images
+                        .get(page_idx)
+                        .cloned()
+                        .map(|image| (page_idx, image))
+                        .ok_or_else(|| crate::XbergError::Ocr {
+                            message: format!("prepared layout image missing for page {}", page_idx + 1),
+                            source: None,
+                        })
+                })
+                .collect::<crate::Result<Vec<_>>>()?
+        } else {
+            render_selected_pages_from_document(
+                &render_doc,
+                &page_rotations,
+                &page_indices[batch_start..batch_end],
+                security_limits,
+                config.images.as_ref(),
+            )?
+        };
+        #[cfg(not(feature = "layout-detection"))]
         let page_images = render_selected_pages_from_document(
             &render_doc,
             &page_rotations,
@@ -566,7 +661,10 @@ pub(crate) async fn extract_mixed_ocr_native(
                     let image_arc = Arc::clone(image);
                     let render_doc_clone = Arc::clone(&render_doc);
                     let pipeline_clone = pipeline.clone();
-                    let config_clone = config.clone();
+                    let config_clone = pipeline_stage_config
+                        .as_ref()
+                        .expect("pipeline stage config exists with effective pipeline")
+                        .clone();
                     let idx = *page_idx;
                     // This page's own known `/Rotate` value, already resolved by
                     // `open_pdf_for_page_ocr` above -- the sibling single-backend route
@@ -598,7 +696,7 @@ pub(crate) async fn extract_mixed_ocr_native(
                     // render is handled there, not here.
                     #[cfg(feature = "layout-detection")]
                     let page_detection: Option<crate::layout::DetectionResult> =
-                        detection_for_mixed_route_page(layout_detections_for_mixed.as_deref(), *page_idx).cloned();
+                        detection_for_mixed_route_page(layout_detections_for_mixed, *page_idx).cloned();
                     join_set.spawn(async move {
                         if config_clone.cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
                             return (idx, Err(crate::XbergError::Cancelled));
@@ -716,7 +814,7 @@ pub(crate) async fn extract_mixed_ocr_native(
                     // See the matching comment on the sibling `JoinSet` branch above (#665).
                     #[cfg(feature = "layout-detection")]
                     let page_detection: Option<&crate::layout::DetectionResult> =
-                        detection_for_mixed_route_page(layout_detections_for_mixed.as_deref(), *page_idx);
+                        detection_for_mixed_route_page(layout_detections_for_mixed, *page_idx);
                     let (
                         text,
                         tables,
@@ -734,7 +832,9 @@ pub(crate) async fn extract_mixed_ocr_native(
                         Some(std::slice::from_ref(image.as_ref())),
                         #[cfg(feature = "layout-detection")]
                         page_detection.map(std::slice::from_ref),
-                        config,
+                        pipeline_stage_config
+                            .as_ref()
+                            .expect("pipeline stage config exists with effective pipeline"),
                         pipeline,
                         None,
                         page_rotation_degrees,
@@ -1376,10 +1476,34 @@ pub(crate) async fn extract_mixed_ocr_native(
 }
 
 #[cfg(all(paddle_ocr, any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+fn full_document_page_seed(page_count: usize, config: &ExtractionConfig) -> (String, Vec<crate::types::PageBoundary>) {
+    let marker_config = config.pages.as_ref().filter(|pages| pages.insert_page_markers);
+    let mut text = String::new();
+    let mut boundaries = Vec::with_capacity(page_count);
+    for page_index in 0..page_count {
+        if let Some(pages) = marker_config {
+            text.push_str(&pages.marker_format.replace("{page_num}", &(page_index + 1).to_string()));
+        } else if page_index > 0 {
+            text.push_str("\n\n");
+        }
+        boundaries.push(crate::types::PageBoundary {
+            byte_start: text.len(),
+            byte_end: text.len(),
+            page_number: page_index as u32 + 1,
+        });
+    }
+    (text, boundaries)
+}
+
+#[cfg(all(paddle_ocr, any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 pub(crate) async fn extract_full_document_ocr_pipeline_per_page(
     content: &[u8],
     config: &ExtractionConfig,
     path: Option<&std::path::Path>,
+    #[cfg(feature = "layout-detection")] prepared_layout_inputs: Option<(
+        Vec<image::DynamicImage>,
+        Vec<crate::layout::DetectionResult>,
+    )>,
 ) -> crate::Result<(
     String,
     Vec<crate::types::Table>,
@@ -1397,22 +1521,17 @@ pub(crate) async fn extract_full_document_ocr_pipeline_per_page(
     }
     let (_, page_count, _) = open_pdf_for_page_ocr(content)?;
     let page_numbers = (1..=page_count as u32).collect::<Vec<_>>();
-    let boundaries = page_numbers
-        .iter()
-        .map(|&page_number| crate::types::PageBoundary {
-            byte_start: 0,
-            byte_end: 0,
-            page_number,
-        })
-        .collect::<Vec<_>>();
+    let (seed_text, boundaries) = full_document_page_seed(page_count, config);
     let (text, accepted_pages, structured_pages, llm_usage, rasters, formulas, preprocessing, ocr_confidence, warnings) =
-        Box::pin(extract_mixed_ocr_native(
-            "",
+        Box::pin(extract_mixed_ocr_native_with_layout_inputs(
+            &seed_text,
             &boundaries,
             &page_numbers,
             content,
             config,
             path,
+            #[cfg(feature = "layout-detection")]
+            MixedLayoutInputs::Prepared(prepared_layout_inputs),
         ))
         .await?;
     if config.cancel_token.as_ref().is_some_and(|token| token.is_cancelled()) {

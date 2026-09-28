@@ -4451,8 +4451,77 @@ mod tests {
         assert_eq!(fallback, vec![638]);
         assert_eq!(
             whole_document.0,
-            "Primary text is complete and readable for this page.Fallback text recovers the unreadable narrow page."
+            "Primary text is complete and readable for this page.\n\nFallback text recovers the unreadable narrow page."
         );
+
+        primary_widths.lock().unwrap().clear();
+        fallback_widths.lock().unwrap().clear();
+        let marker_config = ExtractionConfig {
+            ocr: Some(OcrConfig::default()),
+            pages: Some(crate::core::config::PageConfig {
+                insert_page_markers: true,
+                marker_format: "<PAGE {page_num}>".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let marked_document = super::super::super::run_ocr_with_layout(
+            &pdf,
+            &marker_config,
+            None,
+            #[cfg(feature = "layout-detection")]
+            None,
+            #[cfg(feature = "layout-detection")]
+            None,
+            #[cfg(feature = "layout-detection")]
+            None,
+        )
+        .await
+        .unwrap();
+        let mut marked_primary = primary_widths.lock().unwrap().clone();
+        marked_primary.sort_unstable();
+        assert_eq!(marked_primary, vec![638, 1275]);
+        assert_eq!(fallback_widths.lock().unwrap().as_slice(), &[638]);
+        assert_eq!(
+            marked_document.0,
+            "<PAGE 1>Primary text is complete and readable for this page.<PAGE 2>Fallback text recovers the unreadable narrow page."
+        );
+
+        #[cfg(feature = "layout-detection")]
+        {
+            crate::extractors::pdf::layout_runner::watch_ocr_layout_runs_for(&pdf);
+            primary_widths.lock().unwrap().clear();
+            fallback_widths.lock().unwrap().clear();
+            let layout_config = ExtractionConfig {
+                ocr: Some(OcrConfig::default()),
+                layout: Some(Default::default()),
+                ..Default::default()
+            };
+            let layout_images = vec![image::RgbImage::new(1275, 1650), image::RgbImage::new(638, 1650)];
+            let layout_detections = layout_images
+                .iter()
+                .map(|image| crate::layout::DetectionResult {
+                    page_width: image.width(),
+                    page_height: image.height(),
+                    detections: Vec::new(),
+                })
+                .collect();
+            let layout_document = super::super::super::run_ocr_with_layout(
+                &pdf,
+                &layout_config,
+                None,
+                Some(layout_images),
+                Some(layout_detections),
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(crate::extractors::pdf::layout_runner::ocr_layout_run_count(), 0);
+            assert_eq!(
+                layout_document.0,
+                "Primary text is complete and readable for this page.\n\nFallback text recovers the unreadable narrow page."
+            );
+        }
 
         primary_widths.lock().unwrap().clear();
         fallback_widths.lock().unwrap().clear();

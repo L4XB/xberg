@@ -1130,7 +1130,14 @@ async fn run_ocr_with_layout(
             && ocr_config.backend == "tesseract"
         {
             let (text, tables, elements, document, usage, page_texts, rasters, formulas, preprocessing, confidence) =
-                Box::pin(ocr::extract_full_document_ocr_pipeline_per_page(content, config, path)).await?;
+                Box::pin(ocr::extract_full_document_ocr_pipeline_per_page(
+                    content,
+                    config,
+                    path,
+                    #[cfg(feature = "layout-detection")]
+                    prepared_layout_inputs,
+                ))
+                .await?;
             return Ok((
                 text,
                 tables,
