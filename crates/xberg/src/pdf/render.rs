@@ -415,6 +415,11 @@ pub fn take_xberg_native_pdf_render_warnings() -> Vec<ProcessingWarning> {
     ENGINE_PENDING_WARNINGS.with(|pending| std::mem::take(&mut *pending.borrow_mut()))
 }
 
+#[cfg(feature = "pdf")]
+pub(crate) fn record_render_warning(warning: ProcessingWarning) {
+    ENGINE_PENDING_WARNINGS.with(|pending| push_warning_deduped(&mut pending.borrow_mut(), warning));
+}
+
 /// Deposit warnings drained on another thread into *this* thread's pending buffer, so a later
 /// [`take_xberg_native_pdf_render_warnings`] here returns them.
 ///
@@ -466,6 +471,36 @@ pub(crate) fn par_render_pages_collecting_warnings<T: Send>(
     }
     absorb_render_warnings(warnings);
     Ok(pages)
+}
+
+#[cfg(all(
+    feature = "pdf",
+    any(feature = "ocr", feature = "ocr-pipeline"),
+    feature = "tokio-runtime",
+    not(target_arch = "wasm32")
+))]
+pub(crate) fn par_render_pages_collecting_results<T: Send>(
+    page_indices: Vec<usize>,
+    render: impl Fn(usize) -> crate::Result<T> + Sync + Send,
+) -> Vec<(usize, crate::Result<T>)> {
+    use rayon::prelude::*;
+
+    let rendered: Vec<(usize, crate::Result<T>, Vec<ProcessingWarning>)> = page_indices
+        .into_par_iter()
+        .map(|page_index| {
+            let result = render(page_index);
+            (page_index, result, take_xberg_native_pdf_render_warnings())
+        })
+        .collect();
+
+    let mut outcomes = Vec::with_capacity(rendered.len());
+    let mut warnings = Vec::new();
+    for (page_index, result, page_warnings) in rendered {
+        outcomes.push((page_index, result));
+        warnings.extend(page_warnings);
+    }
+    absorb_render_warnings(warnings);
+    outcomes
 }
 
 // ~keep The cfg is the caller's, not a looser one: this has one call site,

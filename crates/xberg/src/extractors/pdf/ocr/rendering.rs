@@ -1,5 +1,11 @@
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 pub(super) type EncodedPage = (usize, std::sync::Arc<Vec<u8>>, u32, u32);
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+type RenderedPages = Vec<(usize, image::DynamicImage)>;
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+type PageRenderFailures = Vec<(usize, crate::XbergError)>;
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+type PageRenderOutcomes = (RenderedPages, PageRenderFailures);
 /// Render only specific PDF pages to images for OCR processing.
 ///
 /// `page_indices` are 0-indexed. Only the requested pages are rendered,
@@ -13,13 +19,17 @@ pub(crate) fn render_selected_pages_for_ocr(
 ) -> crate::Result<Vec<(usize, image::DynamicImage)>> {
     let (doc, page_count, page_rotations) = open_pdf_for_page_ocr(content)?;
     let valid_indices = valid_page_indices(page_indices, page_count);
-    render_selected_pages_from_document(
+    let (pages, failures) = render_selected_pages_from_document(
         &doc,
         &page_rotations,
         &valid_indices,
         &crate::extractors::security::SecurityLimits::default(),
         None,
-    )
+    );
+    if let Some((_, error)) = failures.into_iter().next() {
+        return Err(error);
+    }
+    Ok(pages)
 }
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 pub(super) fn open_pdf_for_page_ocr(content: &[u8]) -> crate::Result<(xberg_native_pdf::PdfDocument, usize, Vec<u32>)> {
@@ -161,9 +171,7 @@ pub(super) const INK_BLANK_MAX_DARK_RATIO: f64 = 0.0001;
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 pub(super) const MAX_INK_PROBE_TEXT_CHARS: usize = 200;
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
-pub(super) const OCR_PNG_ENCODE_BYTES_PER_PIXEL: u64 = 4;
-#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
-pub(super) const OCR_PNG_ENCODE_FIXED_BYTES: u64 = 256 * 1024;
+pub(super) use crate::image::dpi::{OCR_PNG_ENCODE_BYTES_PER_PIXEL, OCR_PNG_ENCODE_FIXED_BYTES};
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 pub(super) fn validate_png_encode_batch_peak<'a>(
     images: impl IntoIterator<Item = &'a image::DynamicImage>,
@@ -437,7 +445,7 @@ mod render_dpi_tests {
         );
     }
 
-    /// The exact #1577 repro: `target_dpi=600` on the `ImageExtractionConfig` must actually
+    /// The #1577 behavior: a configured `target_dpi` inside the security budget must actually
     /// change the rendered pixel dimensions, not be silently ignored. Before the fix, this
     /// page rendered identically regardless of `images_config`.
     #[test]
@@ -445,7 +453,7 @@ mod render_dpi_tests {
         let pdf = crate::pdf::render::build_minimal_pdf_with_mediabox(612.0, 792.0);
         let (doc, _page_count, page_rotations) = open_pdf_for_full_ocr(&pdf).unwrap();
         let images_config = crate::core::config::ImageExtractionConfig {
-            target_dpi: 600,
+            target_dpi: 300,
             auto_adjust_dpi: false,
             min_dpi: 72,
             max_dpi: 600,
@@ -463,8 +471,59 @@ mod render_dpi_tests {
 
         assert_eq!(batch.len(), 1);
         let (_, _, width, height) = &batch[0];
-        assert_eq!(*width, 5100, "8.5in at 600 DPI is 5100px wide");
-        assert_eq!(*height, 6600, "11in at 600 DPI is 6600px tall");
+        assert_eq!(*width, 2550, "8.5in at 300 DPI is 2550px wide");
+        assert_eq!(*height, 3300, "11in at 300 DPI is 3300px tall");
+    }
+
+    #[test]
+    fn render_full_pdf_ocr_batch_caps_dpi_to_the_png_encode_limit() {
+        let _ = crate::pdf::render::take_xberg_native_pdf_render_warnings();
+        let pdf = crate::pdf::render::build_minimal_pdf_with_mediabox(612.0, 792.0);
+        let (doc, _page_count, page_rotations) = open_pdf_for_full_ocr(&pdf).unwrap();
+        let images_config = crate::core::config::ImageExtractionConfig {
+            target_dpi: 400,
+            auto_adjust_dpi: false,
+            min_dpi: 72,
+            max_dpi: 600,
+            ..Default::default()
+        };
+
+        let batch = render_full_pdf_ocr_batch(
+            &doc,
+            &page_rotations,
+            0..1,
+            &crate::extractors::security::SecurityLimits::default(),
+            Some(&images_config),
+        )
+        .expect("the configured DPI must be lowered before the render exceeds the PNG encode limit");
+
+        let (_, _, width, height) = &batch[0];
+        assert_eq!((*width, *height), (2703, 3498), "Letter at the safe 318 DPI cap");
+        let warnings = crate::pdf::render::take_xberg_native_pdf_render_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].source, "pdf-render");
+        assert_eq!(
+            warnings[0].message,
+            "Page 1 OCR render DPI was reduced from 400 to 318 to fit security_limits.max_content_size"
+        );
+    }
+
+    #[test]
+    fn render_full_pdf_ocr_batch_caps_a_legal_scan_under_default_limits() {
+        let pdf = crate::pdf::render::build_full_page_raster_pdf((612.0, 1008.0), (2550, 4200), 1.0, 0);
+        let (doc, _page_count, page_rotations) = open_pdf_for_full_ocr(&pdf).unwrap();
+
+        let batch = render_full_pdf_ocr_batch(
+            &doc,
+            &page_rotations,
+            0..1,
+            &crate::extractors::security::SecurityLimits::default(),
+            None,
+        )
+        .expect("the scan-density DPI must be lowered before a legal page exceeds the default limit");
+
+        let (_, _, width, height) = &batch[0];
+        assert_eq!((*width, *height), (2397, 3948), "Legal at the safe 282 DPI cap");
     }
 }
 
@@ -798,8 +857,9 @@ pub(super) fn ocr_page_render_dpi(
     doc: &xberg_native_pdf::PdfDocument,
     page_idx: usize,
     images_config: Option<&crate::core::config::ImageExtractionConfig>,
+    security_limits: &crate::extractors::security::SecurityLimits,
 ) -> i32 {
-    crate::image::dpi::pdf_ocr_render_dpi(doc, page_idx, images_config)
+    crate::image::dpi::pdf_ocr_render_dpi(doc, page_idx, images_config, security_limits)
 }
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 fn render_one_full_pdf_ocr_page(
@@ -814,7 +874,7 @@ fn render_one_full_pdf_ocr_page(
     // GH#1786 + GH#1796: the scan-density choice lives in `ocr_page_render_dpi`, and it is made
     // per page HERE rather than in the batch loop above, so the parallel render keeps it. Doing
     // it in the caller would have serialized the batch again. ~keep
-    let render_dpi = ocr_page_render_dpi(doc, page_idx, images_config);
+    let render_dpi = ocr_page_render_dpi(doc, page_idx, images_config, security_limits);
     let rendered =
         crate::pdf::render::render_page_with_safeguards(doc, page_idx, render_dpi.max(1) as u32).map_err(|e| {
             crate::XbergError::Parsing {
@@ -930,7 +990,7 @@ fn render_one_selected_page(
 ) -> crate::Result<(usize, image::DynamicImage)> {
     #[cfg(test)]
     record_render_thread();
-    let render_dpi = ocr_page_render_dpi(doc, idx, images_config);
+    let render_dpi = ocr_page_render_dpi(doc, idx, images_config, security_limits);
     let rendered =
         crate::pdf::render::render_page_with_safeguards(doc, idx, render_dpi.max(1) as u32).map_err(|e| {
             crate::XbergError::Parsing {
@@ -972,23 +1032,45 @@ pub(super) fn render_selected_pages_from_document(
     page_indices: &[usize],
     security_limits: &crate::extractors::security::SecurityLimits,
     images_config: Option<&crate::core::config::ImageExtractionConfig>,
-) -> crate::Result<Vec<(usize, image::DynamicImage)>> {
+) -> PageRenderOutcomes {
     // rayon's work-stealing pool needs OS threads; wasm32 has none, so this falls back to a
     // sequential iterator there, matching the same gate used for the PNG-encode parallel path
     // in `pipeline.rs`. ~keep
     #[cfg(all(feature = "tokio-runtime", not(target_arch = "wasm32")))]
     {
-        crate::pdf::render::par_render_pages_collecting_warnings(page_indices.to_vec(), |idx| {
+        let outcomes = crate::pdf::render::par_render_pages_collecting_results(page_indices.to_vec(), |idx| {
             render_one_selected_page(doc, page_rotations, idx, security_limits, images_config)
-        })
+        });
+        partition_page_render_outcomes(outcomes)
     }
     #[cfg(any(not(feature = "tokio-runtime"), target_arch = "wasm32"))]
     {
-        page_indices
+        let outcomes = page_indices
             .iter()
-            .map(|&idx| render_one_selected_page(doc, page_rotations, idx, security_limits, images_config))
-            .collect()
+            .map(|&idx| {
+                (
+                    idx,
+                    render_one_selected_page(doc, page_rotations, idx, security_limits, images_config),
+                )
+            })
+            .collect();
+        partition_page_render_outcomes(outcomes)
     }
+}
+
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+fn partition_page_render_outcomes(
+    outcomes: Vec<(usize, crate::Result<(usize, image::DynamicImage)>)>,
+) -> PageRenderOutcomes {
+    let mut pages = Vec::with_capacity(outcomes.len());
+    let mut failures = Vec::new();
+    for (page_index, outcome) in outcomes {
+        match outcome {
+            Ok(page) => pages.push(page),
+            Err(error) => failures.push((page_index, error)),
+        }
+    }
+    (pages, failures)
 }
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 pub(super) fn share_rendered_page_images(

@@ -3593,6 +3593,12 @@ mod tests {
 
     #[cfg(all(feature = "pdf", any(feature = "ocr", feature = "ocr-pipeline")))]
     fn build_minimal_multi_page_pdf_with_media_box(page_count: usize, width_pt: u32, height_pt: u32) -> Vec<u8> {
+        build_minimal_pdf_with_media_boxes(&vec![(width_pt, height_pt); page_count])
+    }
+
+    #[cfg(all(feature = "pdf", any(feature = "ocr", feature = "ocr-pipeline")))]
+    fn build_minimal_pdf_with_media_boxes(media_boxes: &[(u32, u32)]) -> Vec<u8> {
+        let page_count = media_boxes.len();
         let mut buf = Vec::<u8>::new();
         buf.extend_from_slice(b"%PDF-1.4\n");
         let mut offsets = Vec::new();
@@ -3611,7 +3617,7 @@ mod tests {
             .as_bytes(),
         );
 
-        for i in 0..page_count {
+        for (i, (width_pt, height_pt)) in media_boxes.iter().enumerate() {
             offsets.push(buf.len());
             let obj_num = 3 + i;
             buf.extend_from_slice(
@@ -3634,6 +3640,201 @@ mod tests {
         buf.extend_from_slice(format!("trailer\n<</Size {} /Root 1 0 R>>\n", total_objs).as_bytes());
         buf.extend_from_slice(format!("startxref\n{}\n%%EOF\n", xref_offset).as_bytes());
         buf
+    }
+
+    #[cfg(all(feature = "pdf", any(feature = "ocr", feature = "ocr-pipeline")))]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn mixed_ocr_keeps_successful_pages_when_one_backend_call_fails() {
+        use crate::core::config::{OcrConfig, OcrPipelineConfig, OcrPipelineStage, OcrQualityThresholds};
+        use crate::plugins::{OcrBackend, OcrBackendType, Plugin};
+        use crate::types::{ExtractedDocument, PageBoundary};
+        use std::sync::Arc;
+
+        const BACKEND_NAME: &str = "mixed-page-failure-test-backend";
+        const OCR_TEXT: &str = "Successful OCR page text repeated enough times to bypass the short-text raster probe. \
+            Successful OCR page text repeated enough times to bypass the short-text raster probe. \
+            Successful OCR page text repeated enough times to bypass the short-text raster probe.";
+
+        struct FailSquarePageBackend;
+
+        #[async_trait::async_trait]
+        impl OcrBackend for FailSquarePageBackend {
+            fn backend_type(&self) -> OcrBackendType {
+                OcrBackendType::Custom
+            }
+            fn supports_language(&self, _: &str) -> bool {
+                true
+            }
+            async fn process_image(&self, data: &[u8], _: &OcrConfig) -> crate::Result<ExtractedDocument> {
+                let image = image::load_from_memory(data).map_err(|error| crate::XbergError::Ocr {
+                    message: format!("test backend could not decode page: {error}"),
+                    source: None,
+                })?;
+                if image.width() == image.height() {
+                    return Err(crate::XbergError::Ocr {
+                        message: "mock backend failure for square page".to_string(),
+                        source: None,
+                    });
+                }
+                Ok(ExtractedDocument {
+                    content: OCR_TEXT.to_string(),
+                    ..Default::default()
+                })
+            }
+            fn supports_document_processing(&self) -> bool {
+                false
+            }
+        }
+
+        impl Plugin for FailSquarePageBackend {
+            fn name(&self) -> &str {
+                BACKEND_NAME
+            }
+            fn version(&self) -> String {
+                "1.0.0".to_string()
+            }
+            fn initialize(&self) -> crate::Result<()> {
+                Ok(())
+            }
+            fn shutdown(&self) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+
+        crate::plugins::register_ocr_backend(Arc::new(FailSquarePageBackend)).unwrap();
+
+        let pdf = build_minimal_pdf_with_media_boxes(&[(612, 792), (504, 504), (612, 792)]);
+        let native_pages = ["native page one", "native page two", "native page three"];
+        let native_text = native_pages.join("\n");
+        let mut offset = 0;
+        let boundaries: Vec<PageBoundary> = native_pages
+            .iter()
+            .enumerate()
+            .map(|(index, text)| {
+                let boundary = PageBoundary {
+                    byte_start: offset,
+                    byte_end: offset + text.len(),
+                    page_number: (index + 1) as u32,
+                };
+                offset = boundary.byte_end + usize::from(index + 1 < native_pages.len());
+                boundary
+            })
+            .collect();
+        let config = ExtractionConfig {
+            force_ocr_pages: Some(vec![1, 2, 3]),
+            ocr: Some(OcrConfig {
+                backend: BACKEND_NAME.to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = extract_mixed_ocr_native(&native_text, &boundaries, &[1, 2, 3], &pdf, &config, None).await;
+
+        let result = result.expect("one failed page must not discard the two successful OCR pages");
+        assert_eq!(result.1.len(), 2);
+        assert_eq!(result.1.get(&1).map(String::as_str), Some(OCR_TEXT));
+        assert_eq!(result.1.get(&3).map(String::as_str), Some(OCR_TEXT));
+        assert_eq!(result.1.get(&2), None);
+        assert!(result.0.contains("native page two"));
+        assert_eq!(
+            result
+                .8
+                .iter()
+                .filter(|warning| warning.message.contains("OCR of page 2 failed"))
+                .count(),
+            1
+        );
+
+        let pipeline_config = ExtractionConfig {
+            force_ocr_pages: Some(vec![1, 2, 3]),
+            ocr: Some(OcrConfig {
+                pipeline: Some(OcrPipelineConfig {
+                    stages: vec![OcrPipelineStage {
+                        backend: BACKEND_NAME.to_string(),
+                        priority: 100,
+                        language: None,
+                        tesseract_config: None,
+                        paddle_ocr_config: None,
+                        vlm_config: None,
+                        backend_options: None,
+                    }],
+                    quality_thresholds: OcrQualityThresholds {
+                        pipeline_min_quality: 0.0,
+                        ..Default::default()
+                    },
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let pipeline_result =
+            extract_mixed_ocr_native(&native_text, &boundaries, &[1, 2, 3], &pdf, &pipeline_config, None)
+                .await
+                .expect("the pipeline loop must isolate the same middle-page failure");
+        assert_eq!(pipeline_result.1.len(), 2);
+        assert_eq!(pipeline_result.1.get(&2), None);
+        assert_eq!(
+            pipeline_result
+                .8
+                .iter()
+                .filter(|warning| warning.message.contains("OCR of page 2 failed"))
+                .count(),
+            1
+        );
+
+        let square_pdf = build_minimal_pdf_with_media_boxes(&[(504, 504), (504, 504)]);
+        let square_native = "first native\nsecond native";
+        let square_boundaries = vec![
+            PageBoundary {
+                byte_start: 0,
+                byte_end: 12,
+                page_number: 1,
+            },
+            PageBoundary {
+                byte_start: 13,
+                byte_end: square_native.len(),
+                page_number: 2,
+            },
+        ];
+        let all_explicit_failed = extract_mixed_ocr_native(
+            square_native,
+            &square_boundaries,
+            &[1, 2],
+            &square_pdf,
+            &ExtractionConfig {
+                force_ocr_pages: Some(vec![1, 2]),
+                ocr: config.ocr.clone(),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .expect_err("force_ocr_pages must fail when every requested page fails");
+        assert!(
+            all_explicit_failed
+                .to_string()
+                .contains("mock backend failure for square page")
+        );
+
+        let automatic_result = extract_mixed_ocr_native(
+            square_native,
+            &square_boundaries,
+            &[1, 2],
+            &square_pdf,
+            &ExtractionConfig {
+                ocr: config.ocr.clone(),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .expect("an automatic per-page route must preserve native text when every OCR page fails");
+        assert_eq!(automatic_result.0, square_native);
+        assert_eq!(automatic_result.8.len(), 2);
+
+        crate::plugins::unregister_ocr_backend(BACKEND_NAME).unwrap();
     }
 
     /// #1690/#1747: `render_selected_pages_from_document` must actually dispatch page

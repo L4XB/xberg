@@ -459,7 +459,7 @@ fn render_layout_page(
     // `effective_pdf_render_dpi` stays in place for the markdown-structure render, which is
     // never OCR input and must not change. ~keep
     let render_dpi = if normalize_for_ocr {
-        crate::image::dpi::pdf_ocr_render_dpi(doc, page_index, budget.images_config)
+        crate::image::dpi::pdf_ocr_render_dpi(doc, page_index, budget.images_config, budget.security_limits)
     } else {
         crate::image::dpi::effective_pdf_render_dpi(
             budget.images_config,
