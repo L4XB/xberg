@@ -131,9 +131,11 @@ const GROUND_TRUTH: &[[&str; 7]] = &[
     ],
 ];
 
-fn config_with_psm(psm: i32, shaded: bool) -> ExtractionConfig {
+fn config_with_preprocessing(psm: i32, shaded: bool, downstream_otsu: bool) -> ExtractionConfig {
     let preprocessing = xberg::types::ImagePreprocessingConfig {
         normalize_shaded_rows: shaded,
+        deskew: downstream_otsu,
+        binarization_method: if downstream_otsu { "otsu" } else { "none" }.to_string(),
         ..Default::default()
     };
     ExtractionConfig {
@@ -270,7 +272,12 @@ fn correct_values_by_kind(table: &xberg::types::Table) -> [KindScore; 4] {
 
 /// Extract once and return the first reconstructed table, or `None` if the page produced none.
 fn first_table(psm: i32, shaded: bool) -> Option<xberg::types::Table> {
-    let document = extract_bytes_document_blocking(SCANNED_TABLE, "application/pdf", &config_with_psm(psm, shaded))
+    first_table_with_preprocessing(psm, shaded, true)
+}
+
+fn first_table_with_preprocessing(psm: i32, shaded: bool, downstream_otsu: bool) -> Option<xberg::types::Table> {
+    let config = config_with_preprocessing(psm, shaded, downstream_otsu);
+    let document = extract_bytes_document_blocking(SCANNED_TABLE, "application/pdf", &config)
         .expect("forced OCR of the scanned table must succeed");
     document.tables.into_iter().next()
 }
@@ -486,6 +493,76 @@ fn measure_1837_labels_by_fill_kind() {
     }
 }
 
+/// GH#1837 four-arm diagnosis: cross shaded-row normalization off/on with the downstream
+/// whole-page Otsu pass off/on and report absolute correct values for every fill kind. Each arm
+/// asserts that the table survived before scoring so a missing table cannot masquerade as zero
+/// recognized values. This also tests GH#1897's claimed symptom on the same ground truth without
+/// introducing the disproven region re-pass. ~keep
+#[test]
+#[ignore = "GH#1837 four-arm Otsu measurement; run with --ignored --nocapture"]
+fn measure_1837_normalization_crossed_with_downstream_otsu() {
+    for psm in [3, 11] {
+        for shaded in [false, true] {
+            for downstream_otsu in [false, true] {
+                let table = first_table_with_preprocessing(psm, shaded, downstream_otsu)
+                    .unwrap_or_else(|| panic!("PSM {psm} shaded={shaded} otsu={downstream_otsu} must produce a table"));
+                assert!(
+                    table.cells.len() >= 20,
+                    "PSM {psm} shaded={shaded} otsu={downstream_otsu}: table has only {} rows",
+                    table.cells.len()
+                );
+                for score in correct_values_by_kind(&table) {
+                    println!(
+                        "GH1837 psm={psm} shaded={shaded} otsu={downstream_otsu} {} values {}/{} absent {:?}",
+                        score.kind, score.correct, score.of, score.rows_absent
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// GH#1837 diagnosis: print the raw TSV records for the shaded-row labels beside the rows that
+/// survive table reconstruction. This distinguishes recognition artifacts such as a leading `[` or
+/// a standalone `|` from later cell assignment. ~keep
+#[test]
+#[ignore = "GH#1837 raw recognition versus reconstructed grid; run with --ignored --nocapture"]
+fn measure_1837_raw_tsv_against_reconstructed_rows() {
+    let mut config = config_with_preprocessing(11, true, true);
+    config
+        .ocr
+        .as_mut()
+        .and_then(|ocr| ocr.tesseract_config.as_mut())
+        .expect("the measurement config must carry an explicit Tesseract config")
+        .output_format = "tsv".to_string();
+    let document = extract_bytes_document_blocking(SCANNED_TABLE, "application/pdf", &config)
+        .expect("forced OCR of the scanned table must succeed");
+
+    for line in document.content.lines().filter(|line| {
+        let fields: Vec<&str> = line.split('\t').collect();
+        let near_page_bottom = fields
+            .get(7)
+            .and_then(|top| top.parse::<u32>().ok())
+            .is_some_and(|top| top >= 1300);
+        ["TOTAL", "CHANGE", "STOCK", "SUBTOTAL"]
+            .iter()
+            .any(|needle| line.contains(needle))
+            || line.ends_with("\t|")
+            || line.contains("\t[")
+            || near_page_bottom
+    }) {
+        println!("RAW {line}");
+    }
+    let table = document
+        .tables
+        .first()
+        .expect("PSM 11 normalized OCR must produce a table");
+    assert!(table.cells.len() >= 20, "the scored table must survive reconstruction");
+    for row in &table.cells {
+        println!("GRID {row:?}");
+    }
+}
+
 /// The absolute count of DARK-fill ground-truth values landing in the correct cell, at PSM 11,
 /// with `normalize_shaded_rows` off vs on. Requires the table to survive with its full row count
 /// first (mirrors `the_scanned_table_is_not_discarded_over_a_phantom_column`): a `0 of 18` from a
@@ -511,32 +588,23 @@ fn dark_fill_correct_values(psm: i32, shaded: bool) -> usize {
 /// only the three LIGHT-fill labels on a different fixture, and `shaded_rows.rs`'s own unit tests
 /// assert pixel polarity on a synthetic page, not values read.
 ///
-/// A four-arm measurement (option off/on, crossed with `invert_dark_bands` present/removed)
-/// found the claim understated: turning the option on does not cost 6 of the 18 dark-fill values
-/// as the issue reported, it costs all 18 -- every one of the three dark-fill rows' *labels*
-/// stops matching, at both PSM 3 and PSM 11, so `correct_values_by_kind` cannot even find the row
-/// to score its values. `A3` (option off, `invert_dark_bands` removed) reproduced `A1` (option
-/// off, HEAD) exactly at both PSMs and in every row kind, proving the build/edit that isolated
-/// `invert_dark_bands` actually took effect. `A4` (option on, `invert_dark_bands` removed)
-/// recovered 12 of 18 at PSM 3 and 6 of 18 at PSM 11 with no measured loss on MID, LIGHT or PLAIN
-/// rows -- evidence that `invert_dark_bands`, not shaded-row normalization generally, is the
-/// mechanism, but not evidence that removing it alone is a complete fix (it does not restore the
-/// third dark row at either PSM). See xberg-io/xberg#1837.
+/// The original four-arm `invert_dark_bands` ablation was measured against the fixture's embedded
+/// 196-dpi raster even though production normalizes at 300 dpi, so its causal conclusion was not
+/// valid. The production-path four-arm report above instead crosses normalization with downstream
+/// Xberg Otsu. After the fix, removing Otsu recovers no DARK or MID value: at PSM 3 DARK drops
+/// from 18 to 17 and MID stays at 6, while at PSM 11 DARK stays at 18 and MID at 11; LIGHT also
+/// drops from 18 to 17 at PSM 11. Downstream Otsu is therefore not the loss's cause on this
+/// fixture. See xberg-io/xberg#1837. ~keep
 ///
-/// FLOOR_OFF and FLOOR_ON are the measured PSM-11 values (this measurement, one run, one
-/// fixture); FLOOR_ON pins the current shipped total loss rather than "a floor above 0" because
-/// 0 is what was measured -- there is no room to set it lower without hiding a further
-/// regression, and no headroom above 0 to require without asserting a fix this test does not
-/// make. Update both only alongside a re-run of the four-arm measurement, quoting the new counts.
+/// FLOOR_OFF and FLOOR_ON are the measured PSM-11 values on this fixture. Update them only
+/// alongside a re-run of the four-arm measurement, quoting the new absolute counts.
 #[test]
 fn dark_fill_rows_do_not_lose_more_values_than_measured_when_shaded_normalisation_is_enabled() {
     const PSM: i32 = 11;
     /// Measured 18 of 18 at PSM 11 with normalize_shaded_rows = false, 2026-09-27. ~keep
     const FLOOR_OFF: usize = 18;
-    /// Measured 0 of 18 at PSM 11 with normalize_shaded_rows = true, 2026-09-27 -- the current
-    /// shipped behavior already loses every dark-fill value; this floor cannot be set above the
-    /// measured 0 without asserting a fix that has not been made. ~keep
-    const FLOOR_ON: usize = 0;
+    /// Measured 18 of 18 at PSM 11 with normalize_shaded_rows = true after GH#1837. ~keep
+    const FLOOR_ON: usize = 18;
 
     let off = dark_fill_correct_values(PSM, false);
     let on = dark_fill_correct_values(PSM, true);
@@ -545,14 +613,23 @@ fn dark_fill_rows_do_not_lose_more_values_than_measured_when_shaded_normalisatio
         off >= FLOOR_OFF,
         "dark-fill rows, option off: {off} of 18 (floor {FLOOR_OFF})"
     );
-    // Equality, not `>=`: `on >= 0` is a tautology on `usize`, so the `>=` form asserted
-    // nothing at all. Pinning the exact measured 0 makes an IMPROVEMENT fail too, which is
-    // what forces the re-measure this floor's own rationale asks for (GH#1837). ~keep
     assert_eq!(
         on, FLOOR_ON,
-        "dark-fill rows, option on: {on} of 18 (pinned at the measured {FLOOR_ON}); \
-         if this rose, GH#1837 moved -- re-measure per fill kind and raise the floor"
+        "dark-fill rows, option on: {on} of 18 (expected the measured {FLOOR_ON})"
     );
+}
+
+/// GH#1837: normalized band edges that OCR reads as `[` / `|` must not hide rows whose
+/// labels and values were otherwise recognized. The exact per-kind counts pin the recovery to
+/// DARK and MID rows while proving the LIGHT and PLAIN gains remain intact. ~keep
+#[test]
+fn normalized_band_edge_glyphs_do_not_hide_recognized_shaded_rows() {
+    let table = first_table(11, true).expect("PSM 11 normalized OCR must produce a table");
+    assert!(table.cells.len() >= 20, "the scored table must survive reconstruction");
+
+    let scores = correct_values_by_kind(&table);
+    let actual: Vec<(&str, usize)> = scores.iter().map(|score| (score.kind, score.correct)).collect();
+    assert_eq!(actual, [("DARK", 18), ("MID", 11), ("LIGHT", 18), ("PLAIN", 90)]);
 }
 
 /// The UNCONFIGURED path: OCR on, no `tesseract_config` at all.

@@ -532,6 +532,63 @@ impl TableRegion {
             .collect();
     }
 
+    /// Remove the frame strokes produced by normalized shaded bands when Tesseract reads them as
+    /// leading `[` glyphs or outer-edge `|` words. Requiring repeated bracket-prefixed alphabetic
+    /// words at the same left edge distinguishes this raster artifact from real bracketed content;
+    /// the caller additionally gates it on shaded-row normalization. ~keep
+    fn drop_normalized_band_edge_glyphs(&mut self) {
+        if self.read_boxes.len() < 2 {
+            return;
+        }
+        let left = self.read_boxes.iter().map(|word| word.left).min().unwrap_or(0);
+        let right = self
+            .read_boxes
+            .iter()
+            .map(|word| word.left.saturating_add(word.width))
+            .max()
+            .unwrap_or(0);
+        let edge_tolerance = median_word_height(&self.read_boxes).max(1);
+        let is_bracket_prefix = |word: &HocrWord| {
+            word.left <= left.saturating_add(edge_tolerance)
+                && word
+                    .text
+                    .strip_prefix('[')
+                    .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|character| character.is_alphabetic()))
+        };
+        if self.read_boxes.iter().filter(|word| is_bracket_prefix(word)).count() < 2 {
+            return;
+        }
+
+        let keep: Vec<bool> = self
+            .read_boxes
+            .iter()
+            .map(|word| {
+                let word_right = word.left.saturating_add(word.width);
+                word.text != "|"
+                    || !(word.left <= left.saturating_add(edge_tolerance)
+                        || word_right.saturating_add(edge_tolerance) >= right)
+            })
+            .collect();
+        for (word, read_box) in self.words.iter_mut().zip(&mut self.read_boxes) {
+            if is_bracket_prefix(read_box) {
+                word.text.remove(0);
+                read_box.text.remove(0);
+            }
+        }
+        self.words = std::mem::take(&mut self.words)
+            .into_iter()
+            .zip(&keep)
+            .filter(|(_, keep)| **keep)
+            .map(|(word, _)| word)
+            .collect();
+        self.read_boxes = std::mem::take(&mut self.read_boxes)
+            .into_iter()
+            .zip(&keep)
+            .filter(|(_, keep)| **keep)
+            .map(|(word, _)| word)
+            .collect();
+    }
+
     /// The box around the words as Tesseract read them, underscore marks included. The text
     /// outside the table is picked by the centres of the same boxes, so every word of the table
     /// falls inside it. ~keep
@@ -2236,6 +2293,13 @@ pub(super) fn perform_ocr(
             // dropped, so a dropped mark changes a table's cells but never whether a table is
             // attempted at all (GH#1858). ~keep
             region.drop_shading_marks(config.table_row_threshold_ratio);
+            if config
+                .preprocessing
+                .as_ref()
+                .is_some_and(|preprocessing| preprocessing.normalize_shaded_rows)
+            {
+                region.drop_normalized_band_edge_glyphs();
+            }
 
             let region_left = region.words.iter().map(|w| w.left).min().unwrap_or(0);
             let region_top = region.words.iter().map(|w| w.top).min().unwrap_or(0);
@@ -3210,6 +3274,50 @@ mod tests {
             region.words.len(),
             "both vectors stay parallel"
         );
+    }
+
+    #[test]
+    fn normalized_band_frame_glyphs_are_removed_from_table_edges() {
+        let words = vec![
+            word_at(95, 100, 3, 20, "|"),
+            word_at(100, 100, 70, 20, "[TOTAL"),
+            word_at(300, 100, 60, 20, "1,000"),
+            word_at(700, 100, 3, 20, "|"),
+            word_at(100, 140, 70, 20, "[TOTAL"),
+            word_at(300, 140, 60, 20, "2,000"),
+            word_at(700, 140, 3, 20, "|"),
+        ];
+        let mut region = TableRegion {
+            read_boxes: words.clone(),
+            words,
+        };
+
+        region.drop_normalized_band_edge_glyphs();
+
+        let texts: Vec<&str> = region.words.iter().map(|word| word.text.as_str()).collect();
+        assert_eq!(texts, ["TOTAL", "1,000", "TOTAL", "2,000"]);
+        assert_eq!(region.read_boxes.len(), region.words.len());
+    }
+
+    #[test]
+    fn one_bracketed_label_does_not_license_edge_glyph_cleanup() {
+        let words = vec![
+            word_at(100, 100, 90, 20, "[Pending]"),
+            word_at(300, 100, 60, 20, "1,000"),
+            word_at(700, 100, 3, 20, "|"),
+            word_at(100, 140, 70, 20, "Account"),
+            word_at(300, 140, 60, 20, "2,000"),
+        ];
+        let mut region = TableRegion {
+            read_boxes: words.clone(),
+            words,
+        };
+
+        region.drop_normalized_band_edge_glyphs();
+
+        let texts: Vec<&str> = region.words.iter().map(|word| word.text.as_str()).collect();
+        assert_eq!(texts, ["[Pending]", "1,000", "|", "Account", "2,000"]);
+        assert_eq!(region.read_boxes.len(), region.words.len());
     }
 
     #[test]
