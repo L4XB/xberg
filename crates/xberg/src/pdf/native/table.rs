@@ -320,9 +320,11 @@ pub(crate) struct HeuristicTableExtraction {
 /// and the layout-detection path) per region.
 ///
 /// The clustering step does NOT validate that a region is table-shaped — it
-/// merely separates vertically-isolated word slabs. Multi-column prose on a
-/// single page will pass clustering as one wide region; `is_well_formed_table`
-/// is the actual prose-rejection guard. We pass `layout_guided = true` to
+/// merely separates vertically-isolated word slabs, further split on any
+/// dominant vertical corridor between column blocks. Multi-column prose
+/// narrower than that corridor floor can still pass clustering as one wide
+/// region; `is_well_formed_table` is the actual prose-rejection guard. We
+/// pass `layout_guided = true` to
 /// `post_process_table` so that "we already pre-segmented the page" earns
 /// the relaxed text-density thresholds, but the prose-detection check in
 /// `is_well_formed_table` (row coherence + column semantic uniformity) is
@@ -1254,6 +1256,27 @@ const ROW_GAP_SPLIT_HEIGHT_FACTOR: f32 = 1.8;
 /// in one region, where the post-processing prose tests can judge it. ~keep
 const ROW_CENTER_ROUNDING_SLACK: f32 = 1.0;
 
+/// Minimum width, as a multiple of the page's median word height, of a vertical corridor
+/// that may split one region into independent column blocks. A floor only — see
+/// COLUMN_BLOCK_CORRIDOR_DOMINANCE_PERCENT for what actually distinguishes a page gutter
+/// from a table's own inter-column corridor. ~keep
+const COLUMN_BLOCK_MIN_CORRIDOR_HEIGHTS: f32 = 2.5;
+
+/// How much wider (percent) the splitting corridor must be than the next-widest corridor
+/// of the same region that is also crossed on no row. A genuine table's inter-column
+/// corridors are near-uniform (regular column pitch), so a page gutter stands out as an
+/// outlier among a region's corridors while a table's own gutters do not. ~keep
+const COLUMN_BLOCK_CORRIDOR_DOMINANCE_PERCENT: u64 = 150;
+
+/// Minimum count of both descriptor and numeric words required on each side of a
+/// corridor. This prevents a financial table's label/value gutter from being
+/// mistaken for a page-column boundary. ~keep
+const COLUMN_BLOCK_MIN_SEMANTIC_WORDS: usize = 3;
+
+/// Tolerance, in points, for collapsing word left edges onto one column track. Matches the
+/// region filter's own existing dedup width (previously an unnamed literal 8). ~keep
+const REGION_X_TRACK_TOLERANCE: u32 = 8;
+
 /// Vertical centre of a word, carried as `f32` so the half unit that
 /// `HocrWord`'s integer `height / 2` truncates does not shift a row's centre
 /// relative to rows of a different height (xberg-io/xberg#1760).
@@ -1264,8 +1287,12 @@ fn row_center(word: &crate::pdf::table_reconstruct::HocrWord) -> f32 {
 /// Cluster words on a single page into vertically-contiguous regions.
 ///
 /// Splits the page on row gaps that are abnormally large compared to the
-/// median word height. Each region is a slab of words that may form a table;
-/// the caller validates with `reconstruct_table` + `post_process_table`.
+/// median word height, then further splits each resulting region on a
+/// dominant vertical corridor via `split_regions_at_column_corridors` — a
+/// page gutter separating a table from an adjacent prose column, which the
+/// y-gap test alone cannot see (xberg-io/xberg#1769). Each region is a slab
+/// of words that may form a table; the caller validates with
+/// `reconstruct_table` + `post_process_table`.
 fn cluster_words_into_vertical_regions(
     words: &[crate::pdf::table_reconstruct::HocrWord],
 ) -> Vec<Vec<crate::pdf::table_reconstruct::HocrWord>> {
@@ -1313,6 +1340,8 @@ fn cluster_words_into_vertical_regions(
         regions.push(current);
     }
 
+    split_regions_at_column_corridors(&mut regions, median_height);
+
     attach_aligned_numeric_headers(&mut regions, median_height, row_tolerance);
 
     regions.retain(|r| {
@@ -1327,11 +1356,104 @@ fn cluster_words_into_vertical_regions(
         }
         let mut xs: Vec<u32> = r.iter().map(|w| w.left).collect();
         xs.sort_unstable();
-        xs.dedup_by(|a, b| a.abs_diff(*b) <= 8);
+        xs.dedup_by(|a, b| a.abs_diff(*b) <= REGION_X_TRACK_TOLERANCE);
         xs.len() >= 2
     });
 
     regions
+}
+
+/// Further split each y-clustered region on a dominant vertical corridor — a gap in x
+/// that no word's horizontal interval crosses on any row of the region. A page gutter
+/// between a table and an adjacent prose column produces exactly this shape: the y-gap
+/// test in `cluster_words_into_vertical_regions` has no x term, so a table whose row
+/// pitch is close to a neighbouring column's line pitch never opens a wide enough
+/// vertical gap to separate them (xberg-io/xberg#1769). This pass runs after that
+/// clustering and before the region-shape retain filter. ~keep
+fn split_regions_at_column_corridors(
+    regions: &mut Vec<Vec<crate::pdf::table_reconstruct::HocrWord>>,
+    median_height: u32,
+) {
+    let mut index = 0;
+    while index < regions.len() && regions.len() < MAX_REGIONS_PER_PAGE {
+        match split_region_at_column_corridor(&regions[index], median_height) {
+            Some((left, right)) => {
+                regions[index] = left;
+                regions.push(right);
+            }
+            None => index += 1,
+        }
+    }
+}
+
+/// Split `region` at its single dominant vertical corridor, if one exists. Returns
+/// `None` when the region has no corridor, when the widest corridor does not clear the
+/// height-relative floor, when it is not clearly wider than the next-widest corridor
+/// (a genuine table's own inter-column gutters are near-uniform), or when either side
+/// of the split would not itself look like an independent column block. ~keep
+fn split_region_at_column_corridor(
+    region: &[crate::pdf::table_reconstruct::HocrWord],
+    median_height: u32,
+) -> Option<(
+    Vec<crate::pdf::table_reconstruct::HocrWord>,
+    Vec<crate::pdf::table_reconstruct::HocrWord>,
+)> {
+    let intervals = merged_horizontal_intervals(region);
+    if intervals.len() < 2 {
+        return None;
+    }
+    let mut corridors: Vec<(u32, u32)> = intervals
+        .windows(2)
+        .map(|pair| {
+            let width = pair[1].0.saturating_sub(pair[0].1);
+            (width, pair[0].1 + width / 2)
+        })
+        .collect();
+    corridors.sort_unstable_by_key(|&(width, _)| std::cmp::Reverse(width));
+    let (widest, seam) = *corridors.first()?;
+
+    let minimum_corridor = (median_height.max(1) as f32 * COLUMN_BLOCK_MIN_CORRIDOR_HEIGHTS).ceil() as u32;
+    if widest < minimum_corridor {
+        return None;
+    }
+    let runner_up = corridors.get(1).map_or(0, |&(width, _)| width);
+    if u64::from(widest).saturating_mul(100)
+        < u64::from(runner_up).saturating_mul(COLUMN_BLOCK_CORRIDOR_DOMINANCE_PERCENT)
+    {
+        return None;
+    }
+
+    let (left, right) = partition_region_at_seam(region, u64::from(seam))?;
+    if left.len() < SIDE_BY_SIDE_MIN_WORDS_PER_SIDE || right.len() < SIDE_BY_SIDE_MIN_WORDS_PER_SIDE {
+        return None;
+    }
+    if !has_independent_column_tracks(&left) || !has_independent_column_tracks(&right) {
+        return None;
+    }
+    if !has_mixed_label_value_evidence(&left) || !has_mixed_label_value_evidence(&right) {
+        return None;
+    }
+    Some((left, right))
+}
+
+/// Whether `side` contains at least two distinct column tracks (word left edges more
+/// than [`REGION_X_TRACK_TOLERANCE`] apart). A single-track side is a lone label or
+/// value column, not an independent column block — splitting a genuine two-column
+/// borderless table at its only gutter would otherwise pass the corridor checks above
+/// vacuously, since a single corridor has no runner-up to compare against. ~keep
+fn has_independent_column_tracks(side: &[crate::pdf::table_reconstruct::HocrWord]) -> bool {
+    let mut lefts: Vec<u32> = side.iter().map(|word| word.left).collect();
+    lefts.sort_unstable();
+    lefts.dedup_by(|a, b| a.abs_diff(*b) <= REGION_X_TRACK_TOLERANCE);
+    lefts.len() >= 2
+}
+
+/// A page column can contain prose labels and values; a table split at its
+/// label/value gutter leaves one of those kinds entirely or nearly absent. ~keep
+fn has_mixed_label_value_evidence(side: &[crate::pdf::table_reconstruct::HocrWord]) -> bool {
+    let descriptor_count = side.iter().filter(|word| is_descriptor_cell(&word.text)).count();
+    let numeric_count = side.iter().filter(|word| is_numeric_word(&word.text)).count();
+    descriptor_count >= COLUMN_BLOCK_MIN_SEMANTIC_WORDS && numeric_count >= COLUMN_BLOCK_MIN_SEMANTIC_WORDS
 }
 
 fn attach_aligned_numeric_headers(
@@ -4520,5 +4642,322 @@ mod tests {
             "bullet-list prose was extracted as a table: {tables:?}"
         );
         assert_eq!(regions.len(), 1, "the adjacent bullet row was split from the prose");
+    }
+
+    // --- xberg-io/xberg#1769: table beside prose in a two-column page ---
+    //
+    // The issue's page 5 has a 6-column borderless table (8.55 pt row pitch) in the
+    // left column, and prose (10.45 pt line pitch) in the right column, with a page
+    // gutter of about 32pt between them (table right edge ~275, prose left edge
+    // ~307). Neither pitch opens a y-gap wide enough to separate them, so the whole
+    // page clusters into one region and the table's bounding box swallows the
+    // neighbouring column's text. ~keep
+
+    /// Left edges of the reproducer's 6 table columns. ~keep
+    const GH1769_TABLE_COLUMNS: [u32; 6] = [44, 87, 129, 171, 211, 252];
+    const GH1769_TABLE_COLUMN_WIDTH: u32 = 22;
+    const GH1769_TABLE_ROW_PITCH: f32 = 8.55;
+    const GH1769_TABLE_ROWS: usize = 18;
+    const GH1769_TABLE_WORD_HEIGHT: u32 = 6;
+    const GH1769_TABLE_TOP0: u32 = 40;
+    /// Table's right edge: last column left (252) + word width (22) = 274. ~keep
+    const GH1769_TABLE_RIGHT_EDGE: u32 = 274;
+    /// Prose column's left edge, ~32pt beyond the table's right edge. ~keep
+    const GH1769_PROSE_LEFT: u32 = 307;
+    const GH1769_PROSE_RIGHT: u32 = 558;
+    const GH1769_PROSE_HEIGHT: u32 = 8;
+    const GH1769_PROSE_PITCH: f32 = 10.45;
+    const GH1769_PROSE_TOP0: u32 = 40;
+
+    fn gh1769_table_words() -> Vec<crate::pdf::table_reconstruct::HocrWord> {
+        let mut words = Vec::new();
+        for row in 0..GH1769_TABLE_ROWS {
+            let top = GH1769_TABLE_TOP0 + (row as f32 * GH1769_TABLE_ROW_PITCH).round() as u32;
+            for (column_index, &left) in GH1769_TABLE_COLUMNS.iter().enumerate() {
+                words.push(crate::pdf::table_reconstruct::HocrWord {
+                    text: if column_index == 0 {
+                        format!("Marker {row}")
+                    } else {
+                        format!("{column_index}.{row}")
+                    },
+                    left,
+                    top,
+                    width: GH1769_TABLE_COLUMN_WIDTH,
+                    height: GH1769_TABLE_WORD_HEIGHT,
+                    confidence: 95.0,
+                });
+            }
+        }
+        words
+    }
+
+    /// Prose lines mixing an uppercase-start heading fragment with lowercase
+    /// continuation lines, the way the reproducer's right column reads. ~keep
+    fn gh1769_prose_lines() -> Vec<Gh1760Line> {
+        let texts: [&str; 14] = [
+            "3.4. Anti-dsDNA antibody groups and clinical",
+            "manifestations were compared across the cohort",
+            "using standard statistical methods for categorical",
+            "and continuous variables where appropriate for",
+            "the distribution observed in each subgroup studied",
+            "here, with corrections applied for multiple",
+            "comparisons across the fourteen measured endpoints",
+            "and the three predefined severity strata used",
+            "throughout the analysis presented in this section",
+            "of the manuscript describing patient outcomes",
+            "over the twelve month follow-up period after",
+            "enrollment into the prospective observational",
+            "cohort study conducted at the tertiary referral",
+            "center between 2018 and 2021 inclusive",
+        ];
+        texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| Gh1760Line {
+                text,
+                left: GH1769_PROSE_LEFT,
+                right: GH1769_PROSE_RIGHT,
+                top: GH1769_PROSE_TOP0 + (index as f32 * GH1769_PROSE_PITCH).round() as u32,
+                height: GH1769_PROSE_HEIGHT,
+            })
+            .collect()
+    }
+
+    fn gh1769_prose_words() -> Vec<crate::pdf::table_reconstruct::HocrWord> {
+        let mut words = Vec::new();
+        for line in &gh1769_prose_lines() {
+            gh1760_push_line(&mut words, line, 0);
+        }
+        words
+    }
+
+    #[test]
+    fn table_and_neighbouring_column_are_separate_regions_gh1769() {
+        let mut words = gh1769_table_words();
+        words.extend(gh1769_prose_words());
+        let regions = cluster_words_into_vertical_regions(&words);
+
+        assert!(
+            regions
+                .iter()
+                .any(|region| region.iter().any(|w| w.left <= GH1769_TABLE_RIGHT_EDGE)),
+            "no region retained any table word; the corridor split ate the table, got {regions:?}"
+        );
+        assert!(
+            regions
+                .iter()
+                .any(|region| region.iter().any(|w| w.left >= GH1769_PROSE_LEFT)),
+            "no region retained any prose word; the corridor split ate the prose column, got {regions:?}"
+        );
+        for region in &regions {
+            let has_table_word = region.iter().any(|w| w.left <= GH1769_TABLE_RIGHT_EDGE);
+            let has_prose_word = region.iter().any(|w| w.left >= GH1769_PROSE_LEFT);
+            assert!(
+                !(has_table_word && has_prose_word),
+                "a region must not straddle the table's right edge ({}) and the prose \
+                 column's left edge ({}); got region with lefts {:?}",
+                GH1769_TABLE_RIGHT_EDGE,
+                GH1769_PROSE_LEFT,
+                region.iter().map(|w| w.left).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn table_region_keeps_its_six_columns_gh1769() {
+        let mut words = gh1769_table_words();
+        words.extend(gh1769_prose_words());
+        let regions = cluster_words_into_vertical_regions(&words);
+        let table_region = regions
+            .iter()
+            .find(|region| region.iter().all(|w| w.left <= GH1769_TABLE_RIGHT_EDGE))
+            .expect("one region must hold the table words only");
+
+        let region_left = table_region.iter().map(|w| w.left).min().unwrap_or(0);
+        let region_right = table_region.iter().map(|w| w.left + w.width).max().unwrap_or(0);
+        let region_width = region_right.saturating_sub(region_left) as f32;
+        let col_gap = heuristic_column_gap(table_region, region_width);
+        let columns = crate::table_core::detect_columns(table_region, col_gap);
+
+        assert!(
+            (5..=6).contains(&columns.len()),
+            "the table's 6 columns must survive the split roughly intact, got {columns:?}"
+        );
+    }
+
+    #[test]
+    fn a_regular_borderless_table_is_not_split_at_its_own_gutters_gh1769() {
+        let words = gh1769_table_words();
+        let regions = cluster_words_into_vertical_regions(&words);
+        assert_eq!(
+            regions.len(),
+            1,
+            "a table's own near-uniform inter-column gutters must not be mistaken for a \
+             page corridor; got {regions:?}"
+        );
+    }
+
+    #[test]
+    fn a_two_column_borderless_table_is_not_split_down_its_only_gutter_gh1769() {
+        const LABEL_LEFT: u32 = 44;
+        const VALUE_LEFT: u32 = 300;
+        const ROWS: u32 = 10;
+        const ROW_PITCH: u32 = 14;
+
+        let mut words = Vec::new();
+        for row in 0..ROWS {
+            let top = 40 + row * ROW_PITCH;
+            words.push(make_word(&format!("Label {row}"), LABEL_LEFT, top, 80));
+            words.push(make_word(&format!("{row}.00"), VALUE_LEFT, top, 40));
+        }
+
+        let regions = cluster_words_into_vertical_regions(&words);
+        assert_eq!(
+            regions.len(),
+            1,
+            "a genuine two-column label/value table has only one gutter, and each side has \
+             only one column track; it must not be split down that gutter, got {regions:?}"
+        );
+    }
+
+    #[test]
+    fn a_label_value_financial_table_is_not_split_at_its_dominant_gutter_gh1769() {
+        let mut words = Vec::new();
+        for row in 0..10 {
+            let top = 40 + row * 14;
+            words.push(make_word("Benefit", 44, top, 46));
+            words.push(make_word("obligation", 96, top, 70));
+            words.push(make_word("2009", 300, top, 32));
+            words.push(make_word("2008", 350, top, 32));
+            words.push(make_word("1,234", 400, top, 38));
+        }
+
+        assert!(
+            split_region_at_column_corridor(&words, 10).is_none(),
+            "a seam leaving descriptors on one side and values on the other must be rejected"
+        );
+    }
+
+    #[test]
+    fn a_full_width_legend_below_columns_remains_one_region_gh1769() {
+        let mut words = gh1769_table_words();
+        words.extend(gh1769_prose_words());
+        for row in 0..3 {
+            let top = 240 + row * 10;
+            words.push(make_word("Fig. 3 legend begins across", 38, top, 230));
+            words.push(make_word("the full page width", 272, top, 250));
+        }
+
+        let regions = cluster_words_into_vertical_regions(&words);
+        let legend_words: Vec<_> = regions
+            .iter()
+            .filter(|region| region.iter().any(|word| word.text.starts_with("Fig. 3")))
+            .collect();
+
+        assert_eq!(legend_words.len(), 1, "the full-width legend must stay in one region");
+        assert_eq!(
+            legend_words[0].len(),
+            6,
+            "the full-width legend must retain both halves of every line"
+        );
+    }
+
+    /// Word with an explicit height, for corridor unit tests that need a specific
+    /// median word height rather than `make_word`'s fixed 10. ~keep
+    fn gh1769_word(
+        text: &str,
+        left: u32,
+        top: u32,
+        width: u32,
+        height: u32,
+    ) -> crate::pdf::table_reconstruct::HocrWord {
+        crate::pdf::table_reconstruct::HocrWord {
+            text: text.to_string(),
+            left,
+            top,
+            width,
+            height,
+            confidence: 95.0,
+        }
+    }
+
+    /// A block of two overlapping x-tracks (so it merges into a single horizontal
+    /// interval with no corridor of its own) repeated over 3 rows: 6 words, 2
+    /// distinct tracks, satisfying `SIDE_BY_SIDE_MIN_WORDS_PER_SIDE` and
+    /// `has_independent_column_tracks` on its own. ~keep
+    fn gh1769_corridor_block(start_left: u32, height: u32) -> Vec<crate::pdf::table_reconstruct::HocrWord> {
+        let mut words = Vec::new();
+        for row in 0..3 {
+            let top = row * 20;
+            words.push(gh1769_word("label", start_left, top, 15, height));
+            words.push(gh1769_word(&format!("{row}.0"), start_left + 10, top, 15, height));
+        }
+        words
+    }
+
+    /// A block's merged horizontal interval spans `[start_left, start_left + 25)`. ~keep
+    const GH1769_CORRIDOR_BLOCK_WIDTH: u32 = 25;
+
+    #[test]
+    fn corridor_one_unit_under_the_floor_is_not_split_gh1769() {
+        let height = 10;
+        let minimum = (height as f32 * COLUMN_BLOCK_MIN_CORRIDOR_HEIGHTS).ceil() as u32;
+        let gap = minimum - 1;
+
+        let mut region = gh1769_corridor_block(0, height);
+        region.extend(gh1769_corridor_block(GH1769_CORRIDOR_BLOCK_WIDTH + gap, height));
+
+        assert!(
+            split_region_at_column_corridor(&region, height).is_none(),
+            "a corridor one unit under the height-relative floor must not split the region"
+        );
+    }
+
+    #[test]
+    fn corridor_at_the_floor_is_split_gh1769() {
+        let height = 10;
+        let minimum = (height as f32 * COLUMN_BLOCK_MIN_CORRIDOR_HEIGHTS).ceil() as u32;
+
+        let mut region = gh1769_corridor_block(0, height);
+        region.extend(gh1769_corridor_block(GH1769_CORRIDOR_BLOCK_WIDTH + minimum, height));
+
+        assert!(
+            split_region_at_column_corridor(&region, height).is_some(),
+            "a corridor exactly at the height-relative floor must split the region"
+        );
+    }
+
+    #[test]
+    fn two_equal_width_corridors_are_not_split_gh1769() {
+        let height = 10;
+        let gap = 60;
+
+        let mut region = gh1769_corridor_block(0, height);
+        region.extend(gh1769_corridor_block(GH1769_CORRIDOR_BLOCK_WIDTH + gap, height));
+        let third_start = GH1769_CORRIDOR_BLOCK_WIDTH + gap + GH1769_CORRIDOR_BLOCK_WIDTH + gap;
+        region.extend(gh1769_corridor_block(third_start, height));
+
+        assert!(
+            split_region_at_column_corridor(&region, height).is_none(),
+            "two corridors of equal width have no dominant one and must not be split"
+        );
+    }
+
+    #[test]
+    fn a_corridor_one_and_a_half_times_the_other_is_split_gh1769() {
+        let height = 10;
+        let wide_gap = 60;
+        let narrow_gap = 40;
+
+        let mut region = gh1769_corridor_block(0, height);
+        let second_start = GH1769_CORRIDOR_BLOCK_WIDTH + wide_gap;
+        region.extend(gh1769_corridor_block(second_start, height));
+        let third_start = second_start + GH1769_CORRIDOR_BLOCK_WIDTH + narrow_gap;
+        region.extend(gh1769_corridor_block(third_start, height));
+
+        assert!(
+            split_region_at_column_corridor(&region, height).is_some(),
+            "a corridor 1.5x wider than the next-widest is dominant and must split the region"
+        );
     }
 }

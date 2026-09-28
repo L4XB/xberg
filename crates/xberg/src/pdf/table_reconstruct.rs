@@ -10,6 +10,9 @@ pub(crate) use crate::table_core::{HocrWord, reconstruct_table, table_to_markdow
 const DENSE_NUMERIC_MIN_DATA_ROWS: usize = 6;
 const DENSE_NUMERIC_MIN_COLUMNS: usize = 6;
 const DENSE_NUMERIC_MIN_CELL_PERCENT: usize = 75;
+const RECURRING_NUMERIC_MIN_TRACKS: usize = 3;
+const RECURRING_NUMERIC_MIN_TRACK_ROWS: usize = 5;
+const RECURRING_NUMERIC_MIN_TRACK_PERCENT: usize = 30;
 /// Minimum non-empty data cells for the short-numeric-table exemption. Below
 /// this there is too little evidence to call a grid a genuine table.
 const SHORT_NUMERIC_MIN_DATA_CELLS: usize = 4;
@@ -1011,7 +1014,10 @@ fn post_process_table_inner(
                 continuation_count += 1;
             }
         }
-        if eligible_transitions >= 3 && continuation_count * 10 > eligible_transitions * 4 {
+        if eligible_transitions >= 3
+            && continuation_count * 10 > eligible_transitions * 4
+            && !has_recurring_numeric_tracks(&processed)
+        {
             tracing::debug!(
                 target: "xberg::table_reconstruct",
                 reason = "row_continuation_flow",
@@ -1995,6 +2001,34 @@ fn is_dense_numeric_grid(grid: &[Vec<String>]) -> bool {
 
     non_empty_cells > 0
         && numeric_cells.saturating_mul(100) >= non_empty_cells.saturating_mul(DENSE_NUMERIC_MIN_CELL_PERCENT)
+}
+
+/// Recurring numeric tracks are positive table evidence strong enough to
+/// distinguish wrapped row labels from prose flowing across inferred cells. ~keep
+fn has_recurring_numeric_tracks(grid: &[Vec<String>]) -> bool {
+    let Some(width) = grid.first().map(Vec::len) else {
+        return false;
+    };
+    let data_rows = grid.len().saturating_sub(1);
+    if data_rows < RECURRING_NUMERIC_MIN_TRACK_ROWS {
+        return false;
+    }
+    let minimum_support = data_rows
+        .saturating_mul(RECURRING_NUMERIC_MIN_TRACK_PERCENT)
+        .div_ceil(100)
+        .max(RECURRING_NUMERIC_MIN_TRACK_ROWS);
+
+    (0..width)
+        .filter(|&column| {
+            grid.iter()
+                .skip(1)
+                .filter(|row| row.get(column).is_some_and(|cell| is_numeric_value_cell(cell.trim())))
+                .count()
+                >= minimum_support
+        })
+        .take(RECURRING_NUMERIC_MIN_TRACKS)
+        .count()
+        >= RECURRING_NUMERIC_MIN_TRACKS
 }
 
 /// Whether the grid's data cells are overwhelmingly numeric values, with no
@@ -3293,6 +3327,70 @@ mod tests {
         assert!(
             result.is_some(),
             "Table with proper sentence endings should not be rejected by row-continuation check"
+        );
+    }
+
+    #[test]
+    fn test_row_continuation_accepts_wrapped_labels_with_recurring_numeric_tracks() {
+        let mut table = vec![vec![
+            "Characteristic".into(),
+            "Group A".into(),
+            "Group B".into(),
+            "Group C".into(),
+            "P A/B".into(),
+            "P A/C".into(),
+        ]];
+        for row in 0..8 {
+            table.push(vec![
+                format!("wrapped label {row}"),
+                format!("{}", 100 + row),
+                format!("{}", 200 + row),
+                format!("{}", 300 + row),
+                format!("0.0{row}"),
+                format!("0.1{row}"),
+            ]);
+        }
+
+        let result = post_process_table(table, true, false);
+        assert!(
+            result.is_some(),
+            "three or more recurring numeric tracks must override sentence-flow evidence from wrapped labels"
+        );
+    }
+
+    #[test]
+    fn test_row_continuation_rejects_prose_with_incidental_numeric_tracks() {
+        let mut table = vec![vec![
+            "Narrative".into(),
+            "Measure A".into(),
+            "Measure B".into(),
+            "Measure C".into(),
+        ]];
+        for row in 0..8 {
+            let incidental = row < 3;
+            table.push(vec![
+                format!("continuing prose row {row}"),
+                if incidental {
+                    format!("{}", 100 + row)
+                } else {
+                    "across".into()
+                },
+                if incidental {
+                    format!("{}", 200 + row)
+                } else {
+                    "several".into()
+                },
+                if incidental {
+                    format!("{}", 300 + row)
+                } else {
+                    "columns".into()
+                },
+            ]);
+        }
+
+        assert!(
+            post_process_table(table, true, false).is_none(),
+            "three incidental numeric tracks without recurring row support must not bypass prose-flow rejection"
         );
     }
 
