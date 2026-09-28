@@ -161,8 +161,8 @@ impl ColumnTrack {
 /// Detect columns from word x-coordinates, each carrying the left edges membership is decided
 /// against and the median left edge callers report as its position.
 ///
-/// Groups words by left edge within `column_threshold`, splits a value group that holds two columns
-/// (see [`split_row_sharing_value_groups`]), then folds adjacent all-value columns whose right edges
+/// Groups words by left edge within `column_threshold`, splits a group that holds two columns
+/// (see [`split_row_sharing_groups`]), then folds adjacent all-value columns whose right edges
 /// coincide within the same threshold (see [`fold_right_aligned_tracks`]). `row_positions` are the
 /// rows the words were grouped into; row 0 is the header row.
 pub(crate) fn detect_columns(words: &[HocrWord], row_positions: &[u32], column_threshold: u32) -> Vec<ColumnTrack> {
@@ -171,7 +171,7 @@ pub(crate) fn detect_columns(words: &[HocrWord], row_positions: &[u32], column_t
     }
 
     let groups = cluster_by_edge(words, column_threshold, |word| word.left);
-    let groups = split_row_sharing_value_groups(groups, row_positions, column_threshold);
+    let groups = split_row_sharing_groups(groups, row_positions, column_threshold);
 
     let mut columns: Vec<ColumnTrack> = groups
         .iter()
@@ -220,35 +220,71 @@ fn shares_a_row(group: &[&HocrWord], row_positions: &[u32]) -> bool {
         })
 }
 
-/// Split a left-edge group of value tokens that holds two right-aligned columns
-/// (xberg-io/xberg#1909).
+/// Split a left-edge group that holds two columns (xberg-io/xberg#1909).
 ///
 /// Tokens are already merged into cells, so two tokens of one row in one group are two cells, and
 /// two cells of one row cannot be one column. That happens when a short amount in one column starts
 /// within `column_threshold` of a long amount in the next: `7` ends where its column ends, and
-/// `40,218,965` starts 47px to its right at 300 dpi. Such a group is re-grouped by right edge, and
-/// the split is kept only when it yields more than one group and none of them still holds two tokens
-/// of one row. Membership stays on left edges, as [`ColumnTrack::lefts`] requires: the split only
+/// `40,218,965` starts 47px to its right at 300 dpi. Such a group is split by
+/// [`split_by_right_edge`] when that gives each of the two columns its own tokens; otherwise it is
+/// kept whole. Membership stays on left edges, as [`ColumnTrack::lefts`] requires: the split only
 /// gives each of the two columns its own left edge. ~keep
-fn split_row_sharing_value_groups<'a>(
+fn split_row_sharing_groups<'a>(
     groups: Vec<Vec<&'a HocrWord>>,
     row_positions: &[u32],
     column_threshold: u32,
 ) -> Vec<Vec<&'a HocrWord>> {
     let mut split = Vec::with_capacity(groups.len());
     for group in groups {
-        if !group.iter().all(|word| is_cell_value_text(&word.text)) || !shares_a_row(&group, row_positions) {
-            split.push(group);
-            continue;
-        }
-        let by_right_edge = cluster_by_edge(group.iter().copied(), column_threshold, right_edge);
-        if by_right_edge.len() > 1 && !by_right_edge.iter().any(|part| shares_a_row(part, row_positions)) {
-            split.extend(by_right_edge);
-        } else {
-            split.push(group);
+        match shares_a_row(&group, row_positions)
+            .then(|| split_by_right_edge(&group, row_positions, column_threshold))
+            .flatten()
+        {
+            Some(parts) => split.extend(parts),
+            None => split.push(group),
         }
     }
     split
+}
+
+/// Re-group `group` by right edge, or `None` when that gives fewer than two parts or a part that
+/// still holds two tokens of one row.
+///
+/// Only data tokens are re-grouped by right edge. A header label is written from the left edge of
+/// its column whatever the alignment of the values under it, so its right edge says nothing about
+/// its column: it joins the part whose median left edge is nearest its own. ~keep
+fn split_by_right_edge<'a>(
+    group: &[&'a HocrWord],
+    row_positions: &[u32],
+    column_threshold: u32,
+) -> Option<Vec<Vec<&'a HocrWord>>> {
+    let (header, data): (Vec<&HocrWord>, Vec<&HocrWord>) = group
+        .iter()
+        .copied()
+        .partition(|word| find_row_index(row_positions, word) == Some(0));
+    let mut parts = cluster_by_edge(data, column_threshold, right_edge);
+    if parts.len() < 2 {
+        return None;
+    }
+    let lefts: Vec<u32> = parts
+        .iter()
+        .map(|part| median_of(part.iter().map(|word| word.left).collect()))
+        .collect();
+    for word in header {
+        let nearest = (0..parts.len()).min_by_key(|&index| lefts[index].abs_diff(word.left))?;
+        parts[nearest].push(word);
+    }
+    (!parts.iter().any(|part| shares_a_row(part, row_positions))).then_some(parts)
+}
+
+/// Whether `group` has a token below the header row and every such token is a value. Row 0, the
+/// header row, is not read: a column's header label is text by nature.
+fn holds_only_values_below_header(group: &[&HocrWord], row_positions: &[u32]) -> bool {
+    let mut data_tokens = group
+        .iter()
+        .filter(|word| find_row_index(row_positions, word) != Some(0))
+        .peekable();
+    data_tokens.peek().is_some() && data_tokens.all(|word| is_cell_value_text(&word.text))
 }
 
 /// The column one group of tokens forms.
@@ -259,15 +295,10 @@ fn split_row_sharing_value_groups<'a>(
 /// track and never folds (xberg-io/xberg#1909). ~keep
 fn column_track(group: &[&HocrWord], row_positions: &[u32]) -> ColumnTrack {
     let left = median_of(group.iter().map(|word| word.left).collect());
-    let mut data_tokens = group
-        .iter()
-        .filter(|word| find_row_index(row_positions, word) != Some(0))
-        .peekable();
-    let has_data = data_tokens.peek().is_some();
     ColumnTrack {
         left,
         right: median_of(group.iter().map(|word| right_edge(word)).collect()),
-        right_aligned: has_data && data_tokens.all(|word| is_cell_value_text(&word.text)),
+        right_aligned: holds_only_values_below_header(group, row_positions),
         lefts: vec![left],
     }
 }
@@ -2457,5 +2488,75 @@ mod tests {
         let table = reconstruct_table(&words, 50, 0.5);
 
         assert_eq!(table, vec![vec!["1 2".to_string()], vec!["3".to_string()]]);
+    }
+
+    /// xberg-io/xberg#1909: two left-aligned text columns that start closer than the threshold
+    /// share one left-edge group. Two cells of one row cannot be one column whatever their text,
+    /// so the group splits on its right edges as a group of amounts does.
+    ///
+    /// TEST HONESTY: when only a group of values may split, every row reads as one cell, such as
+    /// `["Al ABCDEFG"]`.
+    #[test]
+    fn issue_1909_two_close_text_columns_split_like_two_close_amount_columns() {
+        let words = vec![
+            word("N", 0, 0, 15, 20),
+            word("Code", 45, 0, 60, 20),
+            word("Al", 0, 60, 15, 20),
+            word("ABCDEFG", 45, 60, 105, 20),
+            word("Bo", 0, 120, 15, 20),
+            word("HIJKLMN", 45, 120, 105, 20),
+            word("Cy", 0, 180, 15, 20),
+            word("OPQRSTU", 45, 180, 105, 20),
+        ];
+
+        let table = reconstruct_table(&words, 50, 0.5);
+
+        assert_eq!(
+            table,
+            vec![
+                vec!["N".to_string(), "Code".to_string()],
+                vec!["Al".to_string(), "ABCDEFG".to_string()],
+                vec!["Bo".to_string(), "HIJKLMN".to_string()],
+                vec!["Cy".to_string(), "OPQRSTU".to_string()],
+            ]
+        );
+    }
+
+    /// xberg-io/xberg#1909: a header label written from the left edge of its column joins the
+    /// left-edge group where a one-digit amount of the column before meets the long amounts of its
+    /// own column. The label must not stop that group splitting on its right edges.
+    ///
+    /// TEST HONESTY: when the header label counts against the split, row 1 reads
+    /// `["A", "", "7 40,218,965"]`: both amounts share a cell. When the label is re-grouped by its
+    /// right edge with the amounts, it leaves its column, and row 3's amount lands in a fourth
+    /// column with row 2's `4`.
+    #[test]
+    fn issue_1909_a_header_label_does_not_stop_a_row_sharing_value_group_splitting() {
+        let words = vec![
+            word("Item", 0, 0, 60, 20),
+            word("One", 130, 0, 50, 20),
+            word("Two", 330, 0, 50, 20),
+            word("A", 0, 60, 60, 20),
+            word("7", 285, 60, 15, 20),
+            word("40,218,965", 330, 60, 170, 20),
+            word("B", 0, 120, 60, 20),
+            word("12,345,678", 130, 120, 170, 20),
+            word("4", 485, 120, 15, 20),
+            word("C", 0, 180, 60, 20),
+            word("5", 285, 180, 15, 20),
+            word("17,382,649", 332, 180, 168, 20),
+        ];
+
+        let table = reconstruct_table(&words, 50, 0.5);
+
+        assert_eq!(
+            table,
+            vec![
+                vec!["Item".to_string(), "One".to_string(), "Two".to_string()],
+                vec!["A".to_string(), "7".to_string(), "40,218,965".to_string()],
+                vec!["B".to_string(), "12,345,678".to_string(), "4".to_string()],
+                vec!["C".to_string(), "5".to_string(), "17,382,649".to_string()],
+            ]
+        );
     }
 }
