@@ -1968,6 +1968,15 @@ impl ImageExtractor {
         let default_security_limits = crate::extractors::security::SecurityLimits::default();
         let security_limits = config.security_limits.as_ref().unwrap_or(&default_security_limits);
         let image = crate::extraction::image::decode_image_to_rgb8_with_security_limits(content, security_limits)?;
+        let source_dpi = crate::extraction::image::resolve_known_source_dpi(
+            config
+                .ocr
+                .as_ref()
+                .and_then(crate::extraction::image::explicit_source_dpi_from_ocr_config),
+            content,
+            image.width(),
+            image.height(),
+        );
         let rgb_bytes = u64::try_from(image.as_raw().len()).map_err(|_| {
             crate::extraction::image_decode::image_dimension_error(image.width(), image.height(), u64::MAX, u64::MAX)
         })?;
@@ -2000,6 +2009,10 @@ impl ImageExtractor {
             config,
             pipeline,
             None,
+            Some(crate::extractors::pdf::ocr::PageOcrHints {
+                source_dpi,
+                known_full_page_scan: true,
+            }),
         ))
         .await?;
 
@@ -2759,6 +2772,116 @@ mod tests {
                 auto_adjust_dpi: false,
                 ..Default::default()
             }
+        }
+
+        #[cfg(all(feature = "pdf", feature = "ocr-pipeline"))]
+        #[tokio::test]
+        #[serial_test::serial]
+        async fn standalone_image_pipeline_keeps_whole_image_scan_hints() {
+            use crate::core::config::{OcrConfig, OcrPipelineConfig, OcrPipelineStage, OcrQualityThresholds};
+            use crate::plugins::{OcrBackend, OcrBackendType, Plugin};
+            use crate::types::ExtractedDocument;
+            use std::sync::{Arc, Mutex};
+
+            struct TesseractHintCapturingBackend {
+                config: Mutex<Option<OcrConfig>>,
+            }
+
+            #[async_trait::async_trait]
+            impl OcrBackend for TesseractHintCapturingBackend {
+                fn backend_type(&self) -> OcrBackendType {
+                    OcrBackendType::Custom
+                }
+                fn supports_language(&self, _: &str) -> bool {
+                    true
+                }
+                async fn process_image(&self, _: &[u8], config: &OcrConfig) -> crate::Result<ExtractedDocument> {
+                    *self.config.lock().unwrap() = Some(config.clone());
+                    Ok(ExtractedDocument {
+                        content: "standalone image text".to_string(),
+                        ..Default::default()
+                    })
+                }
+            }
+
+            impl Plugin for TesseractHintCapturingBackend {
+                fn name(&self) -> &str {
+                    "tesseract"
+                }
+                fn version(&self) -> String {
+                    "1.0.0".to_string()
+                }
+                fn initialize(&self) -> crate::Result<()> {
+                    Ok(())
+                }
+                fn shutdown(&self) -> crate::Result<()> {
+                    Ok(())
+                }
+            }
+
+            crate::plugins::unregister_ocr_backend("tesseract").unwrap();
+            let backend = Arc::new(TesseractHintCapturingBackend {
+                config: Mutex::new(None),
+            });
+            crate::plugins::register_ocr_backend(backend.clone()).unwrap();
+
+            let pipeline = OcrPipelineConfig {
+                stages: vec![OcrPipelineStage {
+                    backend: "tesseract".to_string(),
+                    priority: 100,
+                    language: None,
+                    tesseract_config: None,
+                    paddle_ocr_config: None,
+                    vlm_config: None,
+                    backend_options: None,
+                }],
+                quality_thresholds: OcrQualityThresholds {
+                    pipeline_min_quality: 0.0,
+                    ..Default::default()
+                },
+            };
+            let config = ExtractionConfig {
+                ocr: Some(OcrConfig {
+                    pipeline: Some(pipeline.clone()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let png = png_with_phys_density(16, 16, REPORTER_FIXTURE_PPU);
+
+            ImageExtractor::new()
+                .extract_with_ocr_pipeline(&png, &config, &pipeline)
+                .await
+                .expect("standalone image pipeline succeeds");
+
+            crate::plugins::unregister_ocr_backend("tesseract").unwrap();
+            crate::plugins::ensure_ocr_backends_initialized();
+
+            let captured = backend.config.lock().unwrap().clone().expect("backend was called");
+            let source_dpi = captured
+                .backend_options
+                .as_ref()
+                .and_then(|options| options.get("source_dpi"))
+                .and_then(serde_json::Value::as_f64);
+            assert!(
+                source_dpi.is_some_and(|dpi| (dpi - EXPECTED_DPI_FROM_REPORTER_FIXTURE).abs() < DPI_TOLERANCE),
+                "pipeline must preserve the standalone image's embedded source DPI; got {source_dpi:?}"
+            );
+            assert_eq!(
+                captured
+                    .backend_options
+                    .as_ref()
+                    .and_then(|options| options.get("known_full_page_scan"))
+                    .and_then(serde_json::Value::as_bool),
+                Some(true)
+            );
+            assert!(
+                captured
+                    .tesseract_config
+                    .as_ref()
+                    .and_then(|config| config.psm)
+                    .is_some()
+            );
         }
 
         /// Unit-level check on `normalize_image_bytes_for_ocr` directly: a `target_dpi=300`

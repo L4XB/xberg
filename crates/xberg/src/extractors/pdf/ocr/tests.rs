@@ -3479,6 +3479,7 @@ mod tests {
             &config,
             &pipeline,
             None,
+            None,
         )
         .await;
 
@@ -4739,6 +4740,7 @@ mod tests {
             0,
             false,
             None,
+            None,
             0,
             None,
         )
@@ -4862,6 +4864,7 @@ mod tests {
             0,
             false,
             None,
+            None,
             0,
             None,
         )
@@ -4949,6 +4952,7 @@ mod tests {
             None,
             &config,
             &pipeline,
+            None,
             None,
         )
         .await;
@@ -5070,6 +5074,7 @@ mod tests {
             None,
             &config,
             &pipeline,
+            None,
             None,
         )
         .await;
@@ -5200,6 +5205,7 @@ mod tests {
             &config,
             &pipeline,
             None,
+            None,
         )
         .await;
 
@@ -5297,6 +5303,7 @@ mod tests {
             None,
             &config,
             &pipeline,
+            None,
             None,
         )
         .await;
@@ -8198,6 +8205,138 @@ Name: ___
         );
     }
 
+    #[cfg(all(feature = "pdf", any(feature = "ocr", feature = "ocr-pipeline")))]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn selected_page_pipeline_keeps_whole_document_scan_hints() {
+        use crate::core::config::{OcrConfig, OcrPipelineConfig, OcrPipelineStage, OcrQualityThresholds};
+        use crate::plugins::{OcrBackend, OcrBackendType, Plugin};
+        use crate::types::{ExtractedDocument, PageBoundary};
+        use std::sync::{Arc, Mutex};
+
+        struct TesseractHintCapturingBackend {
+            configs: Mutex<Vec<OcrConfig>>,
+        }
+
+        #[async_trait::async_trait]
+        impl OcrBackend for TesseractHintCapturingBackend {
+            fn backend_type(&self) -> OcrBackendType {
+                OcrBackendType::Custom
+            }
+            fn supports_language(&self, _: &str) -> bool {
+                true
+            }
+            async fn process_image(&self, _: &[u8], config: &OcrConfig) -> crate::Result<ExtractedDocument> {
+                self.configs.lock().unwrap().push(config.clone());
+                Ok(ExtractedDocument {
+                    content: "scanned page text".to_string(),
+                    ..Default::default()
+                })
+            }
+        }
+
+        impl Plugin for TesseractHintCapturingBackend {
+            fn name(&self) -> &str {
+                "tesseract"
+            }
+            fn version(&self) -> String {
+                "1.0.0".to_string()
+            }
+            fn initialize(&self) -> crate::Result<()> {
+                Ok(())
+            }
+            fn shutdown(&self) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+
+        crate::plugins::unregister_ocr_backend("tesseract").unwrap();
+        let backend = Arc::new(TesseractHintCapturingBackend {
+            configs: Mutex::new(Vec::new()),
+        });
+        crate::plugins::register_ocr_backend(backend.clone()).unwrap();
+
+        let pipeline = OcrPipelineConfig {
+            stages: vec![OcrPipelineStage {
+                backend: "tesseract".to_string(),
+                priority: 100,
+                language: None,
+                tesseract_config: None,
+                paddle_ocr_config: None,
+                vlm_config: None,
+                backend_options: None,
+            }],
+            quality_thresholds: OcrQualityThresholds {
+                pipeline_min_quality: 0.0,
+                ..Default::default()
+            },
+        };
+        let config = ExtractionConfig {
+            ocr: Some(OcrConfig {
+                pipeline: Some(pipeline.clone()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let pdf = crate::pdf::render::build_full_page_raster_pdf((100.0, 100.0), (400, 400), 1.0, 0);
+        let rendered = render_selected_pages_for_ocr(&pdf, &[0]).expect("scan page renders");
+        let images = rendered.into_iter().map(|(_, image)| image).collect::<Vec<_>>();
+
+        run_ocr_pipeline(
+            Some(&pdf),
+            Some(&images),
+            #[cfg(feature = "layout-detection")]
+            None,
+            &config,
+            &pipeline,
+            None,
+            None,
+        )
+        .await
+        .expect("whole-document pipeline succeeds");
+
+        let native_text = "native page text";
+        let boundaries = [PageBoundary {
+            byte_start: 0,
+            byte_end: native_text.len(),
+            page_number: 1,
+        }];
+        extract_mixed_ocr_native(native_text, &boundaries, &[1], &pdf, &config, None)
+            .await
+            .expect("selected-page pipeline succeeds");
+
+        crate::plugins::unregister_ocr_backend("tesseract").unwrap();
+        crate::plugins::ensure_ocr_backends_initialized();
+
+        let configs = backend.configs.lock().unwrap();
+        assert_eq!(configs.len(), 2, "each route must call the backend once");
+        let hint = |config: &OcrConfig, key: &str| {
+            config
+                .backend_options
+                .as_ref()
+                .and_then(|options| options.get(key))
+                .cloned()
+        };
+        let whole = &configs[0];
+        let selected = &configs[1];
+        assert_eq!(
+            hint(selected, "source_dpi"),
+            hint(whole, "source_dpi"),
+            "selected-page and whole-document OCR must use the same source DPI"
+        );
+        assert!(hint(whole, "source_dpi").and_then(|value| value.as_f64()).is_some());
+        assert_eq!(
+            hint(selected, "known_full_page_scan"),
+            Some(serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            selected.tesseract_config.as_ref().and_then(|config| config.psm),
+            whole.tesseract_config.as_ref().and_then(|config| config.psm),
+            "selected-page and whole-document OCR must use the same scan segmentation mode"
+        );
+        assert!(whole.tesseract_config.as_ref().and_then(|config| config.psm).is_some());
+    }
+
     /// Build a single-line OCR "block" element carrying an hOCR `x_fsize` (points)
     /// attribute, mirroring what `ocr::hocr_parser` attaches for tesseract output.
     #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
@@ -9959,6 +10098,7 @@ Name: ___
             None,
             &config,
             &pipeline,
+            None,
             None,
         )
         .await;

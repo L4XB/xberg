@@ -64,7 +64,8 @@ pub(crate) use document::{
 pub(crate) use pipeline::extract_mixed_ocr_native;
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 pub(crate) use pipeline::{
-    apply_numeric_repair_to_whole_document_ocr, extract_with_ocr, numeric_repair_enabled, run_ocr_pipeline,
+    PageOcrHints, apply_numeric_repair_to_whole_document_ocr, extract_with_ocr, numeric_repair_enabled,
+    run_ocr_pipeline,
 };
 
 #[cfg(all(test, any(feature = "ocr", feature = "ocr-pipeline")))]

@@ -579,6 +579,11 @@ pub(crate) async fn extract_mixed_ocr_native(
                     // resolve the wrong page's rotation (or none at all) for anything but the
                     // document's first OCR'd page (#651).
                     let page_rotation_degrees = page_rotations.get(*page_idx).copied().unwrap_or(0);
+                    let page_ocr_hints = PageOcrHints {
+                        source_dpi: rendered_page_source_dpi(&render_doc, *page_idx, image_arc.width()),
+                        known_full_page_scan: crate::pdf::scan_detect::full_page_raster_density(&render_doc, *page_idx)
+                            .is_some(),
+                    };
                     // See `extract_with_ocr_for_page`'s doc comment on
                     // `points_per_pixel_override`: this call hands the stage a single
                     // detached image with `content: None`, so its own pixel -> point lookup
@@ -617,6 +622,7 @@ pub(crate) async fn extract_mixed_ocr_native(
                             page_rotation_degrees,
                             true,
                             points_per_pixel_override,
+                            Some(page_ocr_hints),
                             idx,
                             Some(render_doc_clone.as_ref()),
                         ))
@@ -709,6 +715,11 @@ pub(crate) async fn extract_mixed_ocr_native(
                     // and `points_per_pixel_override` re. `extract_with_ocr_for_page`'s doc
                     // comment).
                     let page_rotation_degrees = page_rotations.get(*page_idx).copied().unwrap_or(0);
+                    let page_ocr_hints = PageOcrHints {
+                        source_dpi: rendered_page_source_dpi(&render_doc, *page_idx, image.width()),
+                        known_full_page_scan: crate::pdf::scan_detect::full_page_raster_density(&render_doc, *page_idx)
+                            .is_some(),
+                    };
                     let points_per_pixel_override = {
                         let (_, page_height_pt) = page_dimensions_pt(&render_doc, *page_idx);
                         let image_height_px = image.height();
@@ -741,6 +752,7 @@ pub(crate) async fn extract_mixed_ocr_native(
                         page_rotation_degrees,
                         true,
                         points_per_pixel_override,
+                        Some(page_ocr_hints),
                         *page_idx,
                         Some(render_doc.as_ref()),
                     ))
@@ -1445,6 +1457,7 @@ pub(crate) async fn extract_with_ocr(
         0,
         false,
         None,
+        None,
         0,
         None,
     ))
@@ -1462,6 +1475,13 @@ pub(crate) async fn extract_with_ocr(
         preprocessing,
         ocr_confidence,
     ))
+}
+
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+#[derive(Clone, Copy)]
+pub(crate) struct PageOcrHints {
+    pub(crate) source_dpi: Option<f64>,
+    pub(crate) known_full_page_scan: bool,
 }
 /// Same as [`extract_with_ocr`], but `page_rotation_override` -- when non-zero -- is used as
 /// the known `/Rotate` value for every image in `images` instead of this function's own
@@ -1495,6 +1515,10 @@ pub(crate) async fn extract_with_ocr(
 /// it, `content: None` makes the lookup fall back to `1.0` (pixels treated as points), silently
 /// defeating the document-global heading heuristic's absolute-point font-gap comparisons.
 ///
+/// ~keep: `page_ocr_hints` carries source DPI and scan classification when the caller detached a
+/// rendered page from the PDF that supplied those facts. `None` preserves this function's
+/// content-based derivation.
+///
 /// `page_index_offset` maps this function's local image indices back to document page
 /// indices when a caller supplies a detached page image. It affects externally visible page
 /// identity only; internal vectors remain indexed from zero.
@@ -1518,6 +1542,7 @@ pub(super) async fn extract_with_ocr_for_page(
     page_rotation_override: u32,
     skip_document_global_heuristic: bool,
     points_per_pixel_override: Option<f32>,
+    page_ocr_hints: Option<PageOcrHints>,
     page_index_offset: usize,
     xobject_document: Option<&xberg_native_pdf::PdfDocument>,
 ) -> crate::Result<(
@@ -2017,22 +2042,29 @@ pub(super) async fn extract_with_ocr_for_page(
                 // reach the same answer from the source document's MediaBox instead, and stay
                 // hint-free when they are not a whole-page render of it (#1753).
                 #[cfg(feature = "pdf")]
-                let source_dpi = lazy_pdf_render_state
-                    .as_ref()
-                    .and_then(|(doc, _, _)| rendered_page_source_dpi(doc, *page_idx, *width))
-                    .or_else(|| {
-                        external_image_page_dimensions
-                            .and_then(|dimensions| dimensions.get(*page_idx))
-                            .and_then(|dimensions| pre_rendered_page_source_dpi(*dimensions, *width, *height))
-                    });
+                let source_dpi = page_ocr_hints.and_then(|hints| hints.source_dpi).or_else(|| {
+                    lazy_pdf_render_state
+                        .as_ref()
+                        .and_then(|(doc, _, _)| rendered_page_source_dpi(doc, *page_idx, *width))
+                        .or_else(|| {
+                            external_image_page_dimensions
+                                .and_then(|dimensions| dimensions.get(*page_idx))
+                                .and_then(|dimensions| pre_rendered_page_source_dpi(*dimensions, *width, *height))
+                        })
+                });
                 #[cfg(not(feature = "pdf"))]
                 let source_dpi: Option<f64> = None;
                 #[cfg(feature = "pdf")]
-                let whole_page_raster = whole_page_raster_for_ocr_page(
-                    lazy_pdf_render_state.as_ref(),
-                    &mut fallback_pdf_state,
-                    content,
-                    *page_idx,
+                let whole_page_raster = page_ocr_hints.map_or_else(
+                    || {
+                        whole_page_raster_for_ocr_page(
+                            lazy_pdf_render_state.as_ref(),
+                            &mut fallback_pdf_state,
+                            content,
+                            *page_idx,
+                        )
+                    },
+                    |hints| hints.known_full_page_scan,
                 );
                 #[cfg(not(feature = "pdf"))]
                 let whole_page_raster = false;
@@ -2110,22 +2142,29 @@ pub(super) async fn extract_with_ocr_for_page(
                 let page_rotation_degrees: u32 = 0;
                 // See the JoinSet branch above for both derivations.
                 #[cfg(feature = "pdf")]
-                let source_dpi = lazy_pdf_render_state
-                    .as_ref()
-                    .and_then(|(doc, _, _)| rendered_page_source_dpi(doc, *page_idx, *width))
-                    .or_else(|| {
-                        external_image_page_dimensions
-                            .and_then(|dimensions| dimensions.get(*page_idx))
-                            .and_then(|dimensions| pre_rendered_page_source_dpi(*dimensions, *width, *height))
-                    });
+                let source_dpi = page_ocr_hints.and_then(|hints| hints.source_dpi).or_else(|| {
+                    lazy_pdf_render_state
+                        .as_ref()
+                        .and_then(|(doc, _, _)| rendered_page_source_dpi(doc, *page_idx, *width))
+                        .or_else(|| {
+                            external_image_page_dimensions
+                                .and_then(|dimensions| dimensions.get(*page_idx))
+                                .and_then(|dimensions| pre_rendered_page_source_dpi(*dimensions, *width, *height))
+                        })
+                });
                 #[cfg(not(feature = "pdf"))]
                 let source_dpi: Option<f64> = None;
                 #[cfg(feature = "pdf")]
-                let whole_page_raster = whole_page_raster_for_ocr_page(
-                    lazy_pdf_render_state.as_ref(),
-                    &mut fallback_pdf_state,
-                    content,
-                    *page_idx,
+                let whole_page_raster = page_ocr_hints.map_or_else(
+                    || {
+                        whole_page_raster_for_ocr_page(
+                            lazy_pdf_render_state.as_ref(),
+                            &mut fallback_pdf_state,
+                            content,
+                            *page_idx,
+                        )
+                    },
+                    |hints| hints.known_full_page_scan,
                 );
                 #[cfg(not(feature = "pdf"))]
                 let whole_page_raster = false;
@@ -3596,6 +3635,7 @@ pub(crate) async fn run_ocr_pipeline(
     config: &ExtractionConfig,
     pipeline: &crate::core::config::OcrPipelineConfig,
     path: Option<&std::path::Path>,
+    page_ocr_hints: Option<PageOcrHints>,
 ) -> crate::Result<(
     String,
     Vec<crate::types::Table>,
@@ -3631,6 +3671,7 @@ pub(crate) async fn run_ocr_pipeline(
         0,
         false,
         None,
+        page_ocr_hints,
         0,
         None,
     ))
@@ -3683,6 +3724,7 @@ pub(super) async fn run_ocr_pipeline_for_page(
     page_rotation_degrees: u32,
     skip_document_global_heuristic: bool,
     points_per_pixel_override: Option<f32>,
+    page_ocr_hints: Option<PageOcrHints>,
     page_index_offset: usize,
     xobject_document: Option<&xberg_native_pdf::PdfDocument>,
 ) -> crate::Result<(
@@ -3800,6 +3842,7 @@ pub(super) async fn run_ocr_pipeline_for_page(
             page_rotation_degrees,
             skip_document_global_heuristic,
             points_per_pixel_override,
+            page_ocr_hints,
             page_index_offset,
             xobject_document,
         ))
