@@ -234,7 +234,6 @@ pub(crate) fn full_page_raster_density(doc: &PdfDocument, page_index: usize) -> 
 fn readable_glyph_count(spans: &[TextSpan]) -> usize {
     spans
         .iter()
-        .filter(|span| span.artifact_type.is_none())
         .filter(|span| span.provenance != Some(MappingProvenance::Fallback))
         .map(|span| span.text.chars().count())
         .sum()
