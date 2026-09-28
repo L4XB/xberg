@@ -509,6 +509,32 @@ mod render_dpi_tests {
     }
 
     #[test]
+    fn render_full_pdf_ocr_batch_caps_fractional_media_box_with_renderer_dimensions() {
+        let pdf = crate::pdf::render::build_minimal_pdf_with_mediabox(72.1, 72.1);
+        let (doc, _page_count, page_rotations) = open_pdf_for_full_ocr(&pdf).unwrap();
+        let images_config = crate::core::config::ImageExtractionConfig {
+            target_dpi: 100,
+            auto_adjust_dpi: false,
+            min_dpi: 72,
+            max_dpi: 600,
+            ..Default::default()
+        };
+        let security_limits = crate::extractors::security::SecurityLimits {
+            // At 100 DPI the renderer's ceil rule produces 101 x 101 pixels and exceeds
+            // this limit. At the capped 99 DPI it produces 100 x 100 and fits exactly. ~keep
+            max_content_size: 100 * 100 * 11 + 256 * 1024,
+            ..Default::default()
+        };
+
+        let batch = render_full_pdf_ocr_batch(&doc, &page_rotations, 0..1, &security_limits, Some(&images_config))
+            .expect("the cap must use the renderer's ceil dimensions before validating the PNG encode");
+
+        assert_eq!(batch.len(), 1);
+        let (_, _, width, height) = &batch[0];
+        assert_eq!((*width, *height), (100, 100));
+    }
+
+    #[test]
     fn render_full_pdf_ocr_batch_caps_a_legal_scan_under_default_limits() {
         let pdf = crate::pdf::render::build_full_page_raster_pdf((612.0, 1008.0), (2550, 4200), 1.0, 0);
         let (doc, _page_count, page_rotations) = open_pdf_for_full_ocr(&pdf).unwrap();

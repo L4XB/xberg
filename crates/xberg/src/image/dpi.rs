@@ -204,11 +204,9 @@ pub(crate) fn pdf_ocr_render_dpi(
 #[cfg(feature = "pdf")]
 fn cap_pdf_ocr_render_dpi(requested_dpi: i32, page_width_pt: f64, page_height_pt: f64, max_content_size: usize) -> i32 {
     let fits = |dpi: i32| {
-        let width = ((page_width_pt / PDF_POINTS_PER_INCH) * f64::from(dpi))
-            .round()
-            .max(1.0) as u128;
+        let width = ((page_width_pt / PDF_POINTS_PER_INCH) * f64::from(dpi)).ceil().max(1.0) as u128;
         let height = ((page_height_pt / PDF_POINTS_PER_INCH) * f64::from(dpi))
-            .round()
+            .ceil()
             .max(1.0) as u128;
         let bytes_per_pixel = u128::from(
             OCR_RENDER_SOURCE_BYTES_PER_PIXEL + OCR_RGB_CONVERSION_BYTES_PER_PIXEL + OCR_PNG_ENCODE_BYTES_PER_PIXEL,
