@@ -8545,6 +8545,33 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "ocr")]
+    #[test]
+    fn test_per_page_ocr_keeps_good_page_when_document_average_fails() {
+        use crate::types::PageBoundary;
+
+        let good = "Native words remain searchable with the page table.";
+        let mut boundaries = vec![PageBoundary {
+            byte_start: 0,
+            byte_end: good.len(),
+            page_number: 1,
+        }];
+        boundaries.extend((2..=10).map(|page_number| PageBoundary {
+            byte_start: good.len(),
+            byte_end: good.len(),
+            page_number,
+        }));
+
+        let decision = ocr::evaluate_per_page_ocr(good, Some(&boundaries), Some(10), &OcrQualityThresholds::default());
+
+        assert_eq!(decision.failing_pages, (2..=10).collect::<Vec<_>>());
+        assert!(!decision.whole_doc_failure);
+        assert_eq!(
+            ocr::evaluate_ocr_skip_gate(false, good.len(), 0.1, &decision, &OcrQualityThresholds::default()),
+            ocr::OcrGateOutcome::RunFallbackOnPages((2..=10).collect())
+        );
+    }
+
     /// When every page fails the per-page quality check, the gate must route to
     /// RunFallback (ExtractionMethod::Ocr), not RunFallbackOnPages (ExtractionMethod::Mixed).
     /// A document where every page needs OCR is not a mixed document.
@@ -8570,10 +8597,7 @@ mod tests {
 
         let decision = ocr::evaluate_per_page_ocr(&text, Some(&boundaries), Some(2), &OcrQualityThresholds::default());
         assert!(decision.fallback);
-        assert!(
-            decision.failing_pages.is_empty(),
-            "doc-level failure fires before per-page scan when all pages fail"
-        );
+        assert_eq!(decision.failing_pages, vec![1, 2]);
         assert!(
             decision.whole_doc_failure,
             "all pages failing must set whole_doc_failure so gate routes to RunFallback"
