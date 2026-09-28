@@ -415,41 +415,33 @@ async fn test_concurrent_pipeline_processing() {
     }
 }
 
-/// Test concurrent registry reads don't block unnecessarily.
+/// Test concurrent registry reads all find the registered extractor.
 ///
 /// Validates that:
-/// - Multiple readers can access registry simultaneously
-/// - Registry lookups are fast under concurrent load
+/// - Multiple readers can access the registry at the same time
+/// - Every concurrent lookup finds the `text/plain` extractor
+///
+/// No wall-clock bound: on a loaded host, scheduling delay is not a registry defect
+/// (xberg-io/xberg#1923).
 #[tokio::test]
 async fn test_concurrent_registry_reads() {
+    xberg::extractors::ensure_initialized().expect("default extractors should register");
     let registry = get_document_extractor_registry();
 
     let mut handles = vec![];
     for _ in 0..200 {
         let registry_clone = Arc::clone(&registry);
-        handles.push(tokio::spawn(async move {
-            let start = std::time::Instant::now();
-
-            let reg = registry_clone.read();
-            let _extractor = reg.get("text/plain");
-
-            start.elapsed()
-        }));
+        handles.push(tokio::spawn(
+            async move { registry_clone.read().get("text/plain").is_ok() },
+        ));
     }
 
-    let mut max_duration = Duration::from_secs(0);
     for handle in handles {
-        let duration = handle.await.expect("Task should not panic");
-        if duration > max_duration {
-            max_duration = duration;
-        }
+        assert!(
+            handle.await.expect("Task should not panic"),
+            "Every concurrent read should find the text/plain extractor"
+        );
     }
-
-    assert!(
-        max_duration < Duration::from_millis(10),
-        "Registry reads should be fast, max duration: {:?}",
-        max_duration
-    );
 }
 
 /// Test that extraction throughput scales with concurrency.
