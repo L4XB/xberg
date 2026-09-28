@@ -73,6 +73,9 @@ fn image_ocr_positions(doc: &InternalDocument) -> Vec<usize> {
 
 #[cfg(all(feature = "ocr", feature = "tokio-runtime"))]
 fn should_skip_pdf_image_ocr(doc: &InternalDocument, image: &crate::types::ExtractedImage) -> bool {
+    if image.image_kind == Some(crate::types::ImageKind::PageRaster) {
+        return true;
+    }
     // A page-sized PDF XObject repeats content already supplied by native text or
     // page OCR. Keep empty pages eligible so image OCR can still recover their text.
     if doc.source_format != "pdf" || !page_has_extracted_text(doc, image.page_number) {

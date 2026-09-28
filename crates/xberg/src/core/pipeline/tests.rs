@@ -2173,6 +2173,32 @@ mod full_page_image_ocr_tests {
     }
 
     #[test]
+    fn should_return_no_ocr_work_for_page_rasters_without_bounding_boxes() {
+        let mut document = pdf_document();
+        document.push_element(
+            InternalElement::text(
+                ElementKind::OcrText {
+                    level: OcrElementLevel::Block,
+                },
+                "page-level OCR text",
+                0,
+            )
+            .with_page(1),
+        );
+        document.images = vec![ExtractedImage {
+            data: Bytes::from_static(b"page raster"),
+            image_index: 0,
+            page_number: Some(1),
+            bounding_box: None,
+            image_kind: Some(crate::types::ImageKind::PageRaster),
+            ..Default::default()
+        }];
+
+        assert_eq!(image_ocr_positions(&document), Vec::<usize>::new());
+        assert!(document.images[0].ocr_result.is_none());
+    }
+
+    #[test]
     fn should_not_apply_pdf_deduplication_to_other_formats() {
         let mut document = pdf_document();
         document.source_format = "pptx".to_string();
