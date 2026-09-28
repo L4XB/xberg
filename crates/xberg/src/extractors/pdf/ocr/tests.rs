@@ -4269,6 +4269,11 @@ mod tests {
     /// renders successfully with no content stream.
     #[cfg(all(feature = "pdf", any(feature = "ocr", feature = "ocr-pipeline")))]
     fn build_minimal_two_page_pdf(w: f32, h: f32) -> Vec<u8> {
+        build_minimal_two_page_pdf_with_sizes((w, h), (w, h))
+    }
+
+    #[cfg(all(feature = "pdf", any(feature = "ocr", feature = "ocr-pipeline")))]
+    fn build_minimal_two_page_pdf_with_sizes(first: (f32, f32), second: (f32, f32)) -> Vec<u8> {
         let mut buf = Vec::<u8>::new();
         buf.extend_from_slice(b"%PDF-1.4\n");
 
@@ -4278,11 +4283,22 @@ mod tests {
         let obj2_offset = buf.len();
         buf.extend_from_slice(b"2 0 obj\n<</Type /Pages /Kids [3 0 R 4 0 R] /Count 2>>\nendobj\n");
 
-        let mb = format!("[0 0 {} {}]", w, h);
         let obj3_offset = buf.len();
-        buf.extend_from_slice(format!("3 0 obj\n<</Type /Page /MediaBox {} /Parent 2 0 R>>\nendobj\n", mb).as_bytes());
+        buf.extend_from_slice(
+            format!(
+                "3 0 obj\n<</Type /Page /MediaBox [0 0 {} {}] /Parent 2 0 R>>\nendobj\n",
+                first.0, first.1
+            )
+            .as_bytes(),
+        );
         let obj4_offset = buf.len();
-        buf.extend_from_slice(format!("4 0 obj\n<</Type /Page /MediaBox {} /Parent 2 0 R>>\nendobj\n", mb).as_bytes());
+        buf.extend_from_slice(
+            format!(
+                "4 0 obj\n<</Type /Page /MediaBox [0 0 {} {}] /Parent 2 0 R>>\nendobj\n",
+                second.0, second.1
+            )
+            .as_bytes(),
+        );
 
         let xref_offset = buf.len();
         buf.extend_from_slice(b"xref\n");
@@ -4297,6 +4313,170 @@ mod tests {
         buf.extend_from_slice(format!("startxref\n{}\n%%EOF\n", xref_offset).as_bytes());
 
         buf
+    }
+
+    #[cfg(all(paddle_ocr, feature = "pdf", feature = "ocr"))]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn implicit_classical_fallback_is_decided_per_page_on_all_pdf_routes() {
+        use crate::core::config::OcrConfig;
+        use crate::plugins::{OcrBackend, OcrBackendType, Plugin};
+        use crate::types::{ExtractedDocument, PageBoundary};
+        use std::sync::{Arc, Mutex};
+
+        struct RecordingBackend {
+            name: &'static str,
+            primary: bool,
+            widths: Arc<Mutex<Vec<u32>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl OcrBackend for RecordingBackend {
+            fn backend_type(&self) -> OcrBackendType {
+                OcrBackendType::Custom
+            }
+            fn supports_language(&self, _: &str) -> bool {
+                true
+            }
+            async fn process_image(&self, bytes: &[u8], _: &OcrConfig) -> crate::Result<ExtractedDocument> {
+                let width = image::load_from_memory(bytes).unwrap().width();
+                self.widths.lock().unwrap().push(width);
+                let content = if self.primary && width < 900 {
+                    String::new()
+                } else if self.primary {
+                    "Primary text is complete and readable for this page.".to_string()
+                } else {
+                    "Fallback text recovers the unreadable narrow page.".to_string()
+                };
+                Ok(ExtractedDocument {
+                    content,
+                    ..Default::default()
+                })
+            }
+        }
+
+        impl Plugin for RecordingBackend {
+            fn name(&self) -> &str {
+                self.name
+            }
+            fn version(&self) -> String {
+                "1.0.0".to_string()
+            }
+            fn initialize(&self) -> crate::Result<()> {
+                Ok(())
+            }
+            fn shutdown(&self) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+
+        struct RestoreBuiltins;
+
+        impl Drop for RestoreBuiltins {
+            fn drop(&mut self) {
+                let _ = crate::plugins::clear_ocr_backends();
+                crate::plugins::ensure_ocr_backends_initialized();
+            }
+        }
+
+        crate::plugins::ensure_ocr_backends_initialized();
+        crate::plugins::clear_ocr_backends().unwrap();
+        let _restore_builtins = RestoreBuiltins;
+        let primary_widths = Arc::new(Mutex::new(Vec::new()));
+        let fallback_widths = Arc::new(Mutex::new(Vec::new()));
+        crate::plugins::register_ocr_backend(Arc::new(RecordingBackend {
+            name: "tesseract",
+            primary: true,
+            widths: Arc::clone(&primary_widths),
+        }))
+        .unwrap();
+        crate::plugins::register_ocr_backend(Arc::new(RecordingBackend {
+            name: "paddleocr",
+            primary: false,
+            widths: Arc::clone(&fallback_widths),
+        }))
+        .unwrap();
+
+        let pdf = build_minimal_two_page_pdf_with_sizes((612.0, 792.0), (306.0, 792.0));
+        let boundaries = vec![
+            PageBoundary {
+                byte_start: 0,
+                byte_end: 0,
+                page_number: 1,
+            },
+            PageBoundary {
+                byte_start: 0,
+                byte_end: 0,
+                page_number: 2,
+            },
+        ];
+        let config = ExtractionConfig {
+            ocr: Some(OcrConfig::default()),
+            ..Default::default()
+        };
+
+        let result = extract_mixed_ocr_native("", &boundaries, &[1, 2], &pdf, &config, None)
+            .await
+            .unwrap();
+
+        let mut primary = primary_widths.lock().unwrap().clone();
+        primary.sort_unstable();
+        let fallback = fallback_widths.lock().unwrap().clone();
+        assert_eq!(primary, vec![638, 1275]);
+        assert_eq!(fallback, vec![638]);
+        assert_eq!(
+            result.0,
+            "Primary text is complete and readable for this page.Fallback text recovers the unreadable narrow page."
+        );
+
+        primary_widths.lock().unwrap().clear();
+        fallback_widths.lock().unwrap().clear();
+        let whole_document = super::super::super::run_ocr_with_layout(
+            &pdf,
+            &config,
+            None,
+            #[cfg(feature = "layout-detection")]
+            None,
+            #[cfg(feature = "layout-detection")]
+            None,
+            #[cfg(feature = "layout-detection")]
+            None,
+        )
+        .await
+        .unwrap();
+        let mut primary = primary_widths.lock().unwrap().clone();
+        primary.sort_unstable();
+        let fallback = fallback_widths.lock().unwrap().clone();
+        assert_eq!(primary, vec![638, 1275]);
+        assert_eq!(fallback, vec![638]);
+        assert_eq!(
+            whole_document.0,
+            "Primary text is complete and readable for this page.Fallback text recovers the unreadable narrow page."
+        );
+
+        primary_widths.lock().unwrap().clear();
+        fallback_widths.lock().unwrap().clear();
+        let token = crate::cancellation::CancellationToken::new();
+        token.cancel();
+        let cancelled_config = ExtractionConfig {
+            cancel_token: Some(token),
+            ..config
+        };
+        let cancelled = super::super::super::run_ocr_with_layout(
+            &pdf,
+            &cancelled_config,
+            None,
+            #[cfg(feature = "layout-detection")]
+            None,
+            #[cfg(feature = "layout-detection")]
+            None,
+            #[cfg(feature = "layout-detection")]
+            None,
+        )
+        .await;
+        assert!(matches!(cancelled, Err(crate::XbergError::Cancelled)));
+        assert!(primary_widths.lock().unwrap().is_empty());
+        assert!(fallback_widths.lock().unwrap().is_empty());
     }
 
     /// Regression test (review follow-up to #1341): the nested `run_ocr_pipeline`

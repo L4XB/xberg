@@ -20,6 +20,8 @@ use super::document::{
 // `layout-detection` and neither OCR frontend (the `formula-recognition,pdf` CI leg) both
 // blocks compile out, so importing these under the enclosing function's plain
 // `any(ocr, ocr-pipeline)` gate is an unused import. ~keep
+#[cfg(all(paddle_ocr, any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+use super::document::merge_structured_ocr_pages_into_internal_document;
 #[cfg(all(
     any(feature = "ocr", feature = "ocr-pipeline"),
     any(feature = "ocr", feature = "ocr-wasm", not(feature = "layout-detection"))
@@ -451,12 +453,11 @@ pub(crate) async fn extract_mixed_ocr_native(
 
     let capture_rasters = config.images.as_ref().is_some_and(|c| c.include_page_rasters);
     let ocr_config_owned = ensure_elements_enabled(&ocr_config_resolved);
-    // When a `vlm_fallback` policy or an explicit multi-stage `pipeline` is configured,
-    // each page must run through the shared pipeline runner so fallback backends (e.g.
-    // the VLM) apply on this mixed/per-page OCR route too. Previously only the single
-    // configured backend ran here, silently ignoring `vlm_fallback` on the
-    // `scanned_pages` / `force_ocr_pages` / per-page-fallback routes (#1341). The
-    // default (no fallback, no explicit pipeline) keeps the fast single-backend path.
+    // When any effective pipeline is configured or synthesized, each page must run through
+    // the shared pipeline runner so its fallback decision stays page-local. This includes the
+    // implicit Tesseract-to-Paddle pipeline as well as `vlm_fallback` and an explicit pipeline;
+    // otherwise selected-page routes silently collapse the implicit pipeline to Tesseract
+    // alone (#1908). A build/configuration with no effective pipeline keeps the fast path. ~keep
     //
     // Layout detections (#665, `mixed_route_layout_active`) are threaded the same way: the
     // pipeline route is the only one that hands `layout_detections` down to
@@ -465,10 +466,8 @@ pub(crate) async fn extract_mixed_ocr_native(
     // already-tested code path instead of duplicating pixel-space layout assembly here. This
     // only fires when a real detection is available for this call, so `--layout` producing
     // nothing (gate skipped every page, or no `config.layout`) leaves the fast path untouched.
-    let effective_pipeline = if ocr_config_owned.vlm_fallback != crate::core::config::VlmFallbackPolicy::Disabled
-        || ocr_config_owned.pipeline.is_some()
-    {
-        ocr_config_owned.effective_pipeline()
+    let effective_pipeline = if let Some(pipeline) = ocr_config_owned.effective_pipeline() {
+        Some(pipeline)
     } else if mixed_route_layout_active {
         #[cfg(feature = "layout-detection")]
         {
@@ -1373,6 +1372,74 @@ pub(crate) async fn extract_mixed_ocr_native(
         preprocessing_by_page,
         ocr_confidence_by_page,
         accumulated_warnings,
+    ))
+}
+
+#[cfg(all(paddle_ocr, any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+pub(crate) async fn extract_full_document_ocr_pipeline_per_page(
+    content: &[u8],
+    config: &ExtractionConfig,
+    path: Option<&std::path::Path>,
+) -> crate::Result<(
+    String,
+    Vec<crate::types::Table>,
+    Vec<crate::types::OcrElement>,
+    Option<crate::types::internal::InternalDocument>,
+    Vec<crate::types::LlmUsage>,
+    Vec<String>,
+    Option<Vec<crate::types::ExtractedImage>>,
+    Vec<crate::types::Formula>,
+    ahash::AHashMap<u32, crate::types::ImagePreprocessingMetadata>,
+    ahash::AHashMap<u32, crate::types::page::PageOcrConfidence>,
+)> {
+    if config.cancel_token.as_ref().is_some_and(|token| token.is_cancelled()) {
+        return Err(crate::XbergError::Cancelled);
+    }
+    let (_, page_count, _) = open_pdf_for_page_ocr(content)?;
+    let page_numbers = (1..=page_count as u32).collect::<Vec<_>>();
+    let boundaries = page_numbers
+        .iter()
+        .map(|&page_number| crate::types::PageBoundary {
+            byte_start: 0,
+            byte_end: 0,
+            page_number,
+        })
+        .collect::<Vec<_>>();
+    let (text, accepted_pages, structured_pages, llm_usage, rasters, formulas, preprocessing, ocr_confidence, warnings) =
+        Box::pin(extract_mixed_ocr_native(
+            "",
+            &boundaries,
+            &page_numbers,
+            content,
+            config,
+            path,
+        ))
+        .await?;
+    if config.cancel_token.as_ref().is_some_and(|token| token.is_cancelled()) {
+        return Err(crate::XbergError::Cancelled);
+    }
+
+    let page_texts = page_numbers
+        .iter()
+        .map(|page| accepted_pages.get(page).cloned().unwrap_or_default())
+        .collect();
+    let mut document = crate::types::internal::InternalDocument::new("pdf");
+    document.processing_warnings = warnings;
+    merge_structured_ocr_pages_into_internal_document(&mut document, &accepted_pages, &structured_pages);
+    let tables = document.tables.clone();
+    let ocr_elements = document.prebuilt_ocr_elements.clone().unwrap_or_default();
+
+    Ok((
+        text,
+        tables,
+        ocr_elements,
+        Some(document),
+        llm_usage,
+        page_texts,
+        rasters,
+        formulas,
+        preprocessing,
+        ocr_confidence,
     ))
 }
 /// Extract text from PDF using OCR on pre-rendered page images.

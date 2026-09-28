@@ -1120,6 +1120,34 @@ async fn run_ocr_with_layout(
     let ocr_config = config.ocr.as_ref().unwrap_or(&default_ocr_config);
 
     if let Some(pipeline) = ocr_config.effective_pipeline() {
+        #[cfg(paddle_ocr)]
+        // The synthesized classical pipeline is an automatic page-quality fallback. Running
+        // it here as one document lets a good page's score hide a bad page, so use the same
+        // page-local runner as selected-page OCR. Explicit pipelines retain their configured
+        // document scope because their stages may intentionally process the document. ~keep
+        if ocr_config.pipeline.is_none()
+            && ocr_config.vlm_fallback == crate::core::config::VlmFallbackPolicy::Disabled
+            && ocr_config.backend == "tesseract"
+        {
+            let (text, tables, elements, document, usage, page_texts, rasters, formulas, preprocessing, confidence) =
+                Box::pin(ocr::extract_full_document_ocr_pipeline_per_page(content, config, path)).await?;
+            return Ok((
+                text,
+                tables,
+                elements,
+                document,
+                usage,
+                page_texts,
+                rasters,
+                formulas,
+                preprocessing,
+                confidence,
+                ocr_layout_gate_decisions,
+                layout_warning,
+                layout_glyph_drop_warnings,
+            ));
+        }
+
         let (
             mut text,
             mut ocr_tables,
