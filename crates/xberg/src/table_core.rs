@@ -832,6 +832,7 @@ fn assign_grouped_words_to_cells<'a>(
     let num_rows = row_positions.len();
     let num_cols = columns.len();
     let mut table: Vec<Vec<Vec<&'a HocrWord>>> = vec![vec![vec![]; num_cols]; num_rows];
+    let data_supported = columns_with_data_support(groups, row_positions, columns);
 
     for (token, members) in groups {
         let Some(row) = find_row_index(row_positions, token) else {
@@ -842,18 +843,16 @@ fn assign_grouped_words_to_cells<'a>(
         }
         if row == 0 {
             // Row 0 is conventionally the header row throughout this module (see
-            // `data_support_count`, `table_to_markdown`). A multi-word header label can still
-            // legitimately span more than one detected column even after merging into one
-            // cluster for column detection -- its second word's x-position may line up with the
-            // data column it labels rather than with its own first word (xberg-io/xberg#2219).
-            // Keep independent per-word placement here so `merge_header_fragments_by_geometry`
-            // can still reconcile that split; only data rows get whole-cluster placement. ~keep
-            for word in members {
-                if let Some(col) = find_column_index(columns, word)
-                    && col < num_cols
-                {
-                    table[row][col].push(word);
-                }
+            // `data_support_count`, `table_to_markdown`). Keep a merged header token together when
+            // its column has data below it; splitting its words again can move a trailing word to
+            // the next header (#1934). A header-only token can genuinely span toward the data
+            // column it labels, so retain independent placement for that case and let
+            // `merge_header_fragments_by_geometry` reconcile it (#2219). ~keep
+            let token_column = find_column_index(columns, token);
+            if let Some(col) = token_column.filter(|&col| col < num_cols && data_supported[col]) {
+                table[row][col].extend(members.iter().copied());
+            } else {
+                assign_words_to_row(&mut table[row], members, columns);
             }
         } else if let Some(col) = find_column_index(columns, token)
             && col < num_cols
@@ -863,6 +862,30 @@ fn assign_grouped_words_to_cells<'a>(
     }
 
     finish_cell_assignment(table)
+}
+
+fn columns_with_data_support(
+    groups: &[(HocrWord, Vec<&HocrWord>)],
+    row_positions: &[u32],
+    columns: &[ColumnTrack],
+) -> Vec<bool> {
+    let mut supported = vec![false; columns.len()];
+    for (token, _) in groups {
+        if find_row_index(row_positions, token) != Some(0)
+            && let Some(column) = find_column_index(columns, token)
+        {
+            supported[column] = true;
+        }
+    }
+    supported
+}
+
+fn assign_words_to_row<'a>(row: &mut [Vec<&'a HocrWord>], words: &[&'a HocrWord], columns: &[ColumnTrack]) {
+    for &word in words {
+        if let Some(column) = find_column_index(columns, word) {
+            row[column].push(word);
+        }
+    }
 }
 
 /// Shared tail of [`assign_words_to_cells`] and [`assign_grouped_words_to_cells`]: order each
@@ -1634,6 +1657,37 @@ mod tests {
         );
         assert_eq!(table[0], vec!["Name".to_string(), "Value".to_string()]);
         assert_eq!(table[1], vec!["Alice Smith".to_string(), "42".to_string()]);
+    }
+
+    /// xberg-io/xberg#1934: column detection treats a close two-word header as one cell token.
+    /// Assignment must keep that token together when its first word anchors the supported data
+    /// column, even if the second word is geometrically closer to the next column.
+    ///
+    /// TEST HONESTY: assigning header words independently produces `["Code", "Amount", "Unit",
+    /// "cost Total"]`; the second word leaves the cell token and joins the next header. ~keep
+    #[test]
+    fn issue_1934_two_word_header_stays_in_its_supported_column() {
+        let words = vec![
+            word("Code", 0, 0, 50, 20),
+            word("Amount", 100, 0, 70, 20),
+            word("Unit", 200, 0, 70, 20),
+            word("cost", 280, 0, 45, 20),
+            word("Total", 350, 0, 60, 20),
+            word("A", 0, 60, 20, 20),
+            word("10", 100, 60, 30, 20),
+            word("2.50", 200, 60, 50, 20),
+            word("25.00", 350, 60, 60, 20),
+            word("B", 0, 120, 20, 20),
+            word("20", 100, 120, 30, 20),
+            word("3.00", 200, 120, 50, 20),
+            word("60.00", 350, 120, 60, 20),
+        ];
+
+        let (table, column_positions) = reconstruct_table_with_columns(&words, 50, 0.5);
+
+        assert_eq!(table[0], vec!["Code", "Amount", "Unit cost", "Total"]);
+        assert_eq!(table[1], vec!["A", "10", "2.50", "25.00"]);
+        assert_eq!(column_positions, vec![0, 100, 200, 350]);
     }
 
     #[test]
