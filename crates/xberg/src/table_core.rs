@@ -399,6 +399,14 @@ pub(crate) const CELL_MERGE_GAP_HEIGHT_RATIO: f64 = 0.6;
 /// fixture has no punctuation-only tokens, so this multiplier does not affect it). ~keep
 const PUNCTUATION_GLUE_GAP_MULTIPLIER: f64 = 2.0;
 
+/// Multiplier applied to the normal cell-merge gap when a row label's trailing short number is
+/// joined back into its label (xberg-io/xberg#1928, see [`join_split_label_numbers`]).
+///
+/// The word space in a label such as `Item 1` lands on either side of the normal gap depending on
+/// the digit's side bearing. 2x covers that spread, and the join also requires every token of the
+/// number column to sit this close to a word, so a separate number column is left alone. ~keep
+const LABEL_NUMBER_GLUE_GAP_MULTIPLIER: f64 = 2.0;
+
 /// A token/word whose trimmed text is non-empty and entirely ASCII punctuation
 /// (a lone "-", ":", "&", etc.), used to widen the cell-merge gap around it (#1649).
 fn is_pure_punctuation(text: &str) -> bool {
@@ -431,7 +439,7 @@ fn group_words_into_cell_tokens<'a>(
         return words.iter().map(|word| (word.clone(), vec![word])).collect();
     }
 
-    let merge_gap = median_word_height(words) as f64 * CELL_MERGE_GAP_HEIGHT_RATIO;
+    let merge_gap = cell_merge_gap(words);
 
     let mut rows: Vec<Vec<&HocrWord>> = vec![Vec::new(); row_positions.len()];
     for word in words {
@@ -447,6 +455,88 @@ fn group_words_into_cell_tokens<'a>(
     }
 
     groups
+}
+
+/// The widest horizontal gap at which two words in one row join one cell token.
+fn cell_merge_gap(words: &[HocrWord]) -> f64 {
+    median_word_height(words) as f64 * CELL_MERGE_GAP_HEIGHT_RATIO
+}
+
+/// Join a row label's trailing number back into its label, when the numbers form a column only
+/// because the label split in some rows and not in others (xberg-io/xberg#1928).
+///
+/// A label such as `Item 1` has a word space that sits close to the cell-merge gap: a digit's
+/// side bearing moves its OCR box a few pixels, so `Item 1` splits where `Item 2` stays whole.
+/// The split rows mint a narrow column that is empty in the other rows. A column is joined back
+/// only when every one of its tokens is a short number that follows a word in the same row
+/// within [`LABEL_NUMBER_GLUE_GAP_MULTIPLIER`] times the merge gap. A number column with its own
+/// header, or one whose labels vary in width so that some sit far from it, keeps its column.
+///
+/// Returns whether any token was joined, so the caller detects the columns again.
+fn join_split_label_numbers(
+    groups: &mut Vec<(HocrWord, Vec<&HocrWord>)>,
+    row_positions: &[u32],
+    columns: &[ColumnTrack],
+    merge_gap: f64,
+) -> bool {
+    let glue_gap = merge_gap * LABEL_NUMBER_GLUE_GAP_MULTIPLIER;
+    let token_columns: Vec<Option<usize>> = groups
+        .iter()
+        .map(|(token, _)| find_column_index(columns, token))
+        .collect();
+    let follows_label: Vec<bool> = (0..groups.len())
+        .map(|index| {
+            index > 0
+                && is_label_number(&groups[index].0.text)
+                && is_label_word_end(&groups[index - 1].0.text)
+                && find_row_index(row_positions, &groups[index].0)
+                    == find_row_index(row_positions, &groups[index - 1].0)
+                && token_columns[index] != token_columns[index - 1]
+                && groups[index].0.left as f64 - (groups[index - 1].0.left + groups[index - 1].0.width) as f64
+                    <= glue_gap
+        })
+        .collect();
+
+    let mut joinable_columns = vec![true; columns.len()];
+    for (column, &follows) in token_columns.iter().zip(&follows_label) {
+        if let Some(column) = *column
+            && !follows
+        {
+            joinable_columns[column] = false;
+        }
+    }
+    let joins: Vec<usize> = (1..groups.len())
+        .filter(|&index| follows_label[index] && token_columns[index].is_some_and(|column| joinable_columns[column]))
+        .collect();
+
+    for &index in joins.iter().rev() {
+        let (number, members) = groups.remove(index);
+        let (label, label_members) = &mut groups[index - 1];
+        extend_cell_token(label, &number);
+        label_members.extend(members);
+    }
+    !joins.is_empty()
+}
+
+/// Grow `token` to cover `word` and append its text after a space.
+fn extend_cell_token(token: &mut HocrWord, word: &HocrWord) {
+    let new_right = (word.left + word.width).max(token.left + token.width);
+    let new_bottom = (word.top + word.height).max(token.top + token.height);
+    token.top = token.top.min(word.top);
+    token.width = new_right.saturating_sub(token.left);
+    token.height = new_bottom.saturating_sub(token.top);
+    token.text.push(' ');
+    token.text.push_str(&word.text);
+}
+
+/// Whether `text` is the short number a row label ends with: one to three ASCII digits.
+fn is_label_number(text: &str) -> bool {
+    (1..=3).contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Whether `text` ends in a word a label number can follow: its last character is a letter.
+fn is_label_word_end(text: &str) -> bool {
+    text.chars().next_back().is_some_and(char::is_alphabetic)
 }
 
 /// Decide the maximum horizontal gap allowed for merging `word` into the token immediately
@@ -502,13 +592,7 @@ fn merge_row_into_cell_tokens<'a>(row_words: &[&'a HocrWord], merge_gap: f64) ->
                 let gap = word.left as f64 - (token.left + token.width) as f64;
                 let (allowed_gap, is_connector) = allowed_merge_gap(word, next_word, merge_gap, previous_was_connector);
                 if gap <= allowed_gap {
-                    let new_right = (word.left + word.width).max(token.left + token.width);
-                    let new_bottom = (word.top + word.height).max(token.top + token.height);
-                    token.top = token.top.min(word.top);
-                    token.width = new_right.saturating_sub(token.left);
-                    token.height = new_bottom.saturating_sub(token.top);
-                    token.text.push(' ');
-                    token.text.push_str(&word.text);
+                    extend_cell_token(&mut token, word);
                     members.push(word);
                     previous_was_connector = is_connector;
                     (token, members)
@@ -575,9 +659,11 @@ pub(crate) fn reconstruct_table_with_columns(
     }
 
     let row_positions = detect_rows(words, row_threshold_ratio);
-    let groups = group_words_into_cell_tokens(words, &row_positions);
-    let cell_tokens: Vec<HocrWord> = groups.iter().map(|(token, _)| token.clone()).collect();
-    let columns = detect_columns(&cell_tokens, column_threshold);
+    let mut groups = group_words_into_cell_tokens(words, &row_positions);
+    let mut columns = detect_cell_token_columns(&groups, column_threshold);
+    if join_split_label_numbers(&mut groups, &row_positions, &columns, cell_merge_gap(words)) {
+        columns = detect_cell_token_columns(&groups, column_threshold);
+    }
 
     if columns.is_empty() || row_positions.is_empty() {
         return (Vec::new(), Vec::new());
@@ -596,6 +682,12 @@ pub(crate) fn reconstruct_table_with_columns(
         .collect();
 
     (remove_empty_rows_and_columns(result), kept_col_positions)
+}
+
+/// The columns the cell tokens of `groups` form ([`detect_columns`] over each group's token).
+fn detect_cell_token_columns(groups: &[(HocrWord, Vec<&HocrWord>)], column_threshold: u32) -> Vec<ColumnTrack> {
+    let cell_tokens: Vec<HocrWord> = groups.iter().map(|(token, _)| token.clone()).collect();
+    detect_columns(&cell_tokens, column_threshold)
 }
 
 const MIN_HEADER_NEIGHBOR_SUPPORT: usize = 2;
@@ -1267,6 +1359,143 @@ mod tests {
         assert_eq!(word.bottom(), 80);
         assert_eq!(word.y_center(), 65.0);
         assert_eq!(word.x_center(), 140.0);
+    }
+
+    /// Right edges of the five amount columns in [`amount_table_words`].
+    const AMOUNT_RIGHT_EDGES: [u32; 5] = [1050, 1380, 1710, 2040, 2370];
+    const AMOUNT_HEADERS: [&str; 5] = ["Plan", "Actual", "Change", "Prior", "Outlook"];
+    const AMOUNT_ROWS: usize = 14;
+
+    /// A word of `text` whose right edge is `right`, 20 px per character and 25 px high.
+    fn right_aligned_word(text: &str, right: u32, top: u32) -> HocrWord {
+        let width = text.len() as u32 * 20;
+        word(text, right - width, top, width, 25)
+    }
+
+    /// The amount in `row`, `column` of [`amount_table_words`], with a thousands separator.
+    fn amount(row: usize, column: usize) -> String {
+        let value = 1_000 + row * 731 + column * 97;
+        format!("{},{:03}", value / 1_000, value % 1_000)
+    }
+
+    fn row_top(row: usize) -> u32 {
+        441 + 78 * row as u32
+    }
+
+    /// Word boxes of a scanned table: a header row, then [`AMOUNT_ROWS`] rows each with the label
+    /// words `label_words(row, top)` gives and five right-aligned amounts (xberg-io/xberg#1928).
+    fn amount_table_words(
+        header_label: Vec<HocrWord>,
+        label_words: impl Fn(usize, u32) -> Vec<HocrWord>,
+    ) -> Vec<HocrWord> {
+        let mut words = header_label;
+        for (header, &right) in AMOUNT_HEADERS.iter().zip(&AMOUNT_RIGHT_EDGES) {
+            words.push(right_aligned_word(header, right, row_top(0)));
+        }
+        for row in 1..=AMOUNT_ROWS {
+            let top = row_top(row);
+            words.extend(label_words(row, top));
+            for (column, &right) in AMOUNT_RIGHT_EDGES.iter().enumerate() {
+                words.push(right_aligned_word(&amount(row, column), right, top));
+            }
+        }
+        words
+    }
+
+    /// The expected grid of [`amount_table_words`] with `label(row)` in the label cell.
+    fn expected_amount_grid(header_label: &str, label: impl Fn(usize) -> String) -> Vec<Vec<String>> {
+        let mut grid = vec![
+            std::iter::once(header_label.to_string())
+                .chain(AMOUNT_HEADERS.iter().map(ToString::to_string))
+                .collect::<Vec<_>>(),
+        ];
+        for row in 1..=AMOUNT_ROWS {
+            grid.push(
+                std::iter::once(label(row))
+                    .chain((0..AMOUNT_RIGHT_EDGES.len()).map(|column| amount(row, column)))
+                    .collect(),
+            );
+        }
+        grid
+    }
+
+    /// The label word `Item` and its row number, `gap` px apart.
+    fn item_and_number(row: usize, top: u32, gap: u32) -> Vec<HocrWord> {
+        let number = row.to_string();
+        let left = 228 + 71 + gap;
+        vec![
+            word("Item", 228, top, 71, 25),
+            word(&number, left, top, number.len() as u32 * 15, 25),
+        ]
+    }
+
+    /// A row label `Item 1` whose word space falls on either side of the cell-merge gap splits in
+    /// some rows only. The split rows must not mint a narrow number column: the label stays one
+    /// cell and the table keeps its six columns (xberg-io/xberg#1928).
+    #[test]
+    fn word_and_number_row_label_stays_in_one_cell_when_the_space_straddles_the_merge_gap() {
+        // Median height 25 gives a merge gap of 15 px: a 12 px space joins, a 20 px space splits.
+        let words = amount_table_words(vec![word("Item", 228, row_top(0), 71, 25)], |row, top| {
+            let split = row == 1 || row >= 10;
+            item_and_number(row, top, if split { 20 } else { 12 })
+        });
+
+        let grid = reconstruct_table(&words, 50, 0.5);
+
+        assert_eq!(grid, expected_amount_grid("Item", |row| format!("Item {row}")));
+        #[cfg(feature = "pdf")]
+        assert!(
+            crate::pdf::table_reconstruct::post_process_table(grid, false, false).is_some(),
+            "the reconstructed table must pass the sparse-column check"
+        );
+    }
+
+    /// Control for xberg-io/xberg#1928: a one-word label (`Item-1`) never split, and the grid is
+    /// the same table with that label.
+    #[test]
+    fn one_word_row_label_table_is_unchanged() {
+        let words = amount_table_words(vec![word("Item", 228, row_top(0), 71, 25)], |row, top| {
+            let label = format!("Item-{row}");
+            vec![word(&label, 228, top, label.len() as u32 * 15, 25)]
+        });
+
+        let grid = reconstruct_table(&words, 50, 0.5);
+
+        assert_eq!(grid, expected_amount_grid("Item", |row| format!("Item-{row}")));
+    }
+
+    /// Negative control for xberg-io/xberg#1928: a number column is joined into the labels only
+    /// when every one of its numbers sits next to a label word. Labels of varying width leave most
+    /// numbers far from their label, and a number column with its own header word is not a split
+    /// label either; both keep their own column.
+    #[test]
+    fn number_column_keeps_its_column_unless_every_number_follows_a_label_word() {
+        let varying_labels = amount_table_words(vec![word("Name", 228, row_top(0), 80, 25)], |row, top| {
+            let (label, width) = if row % 3 == 0 {
+                ("Longername", 272)
+            } else {
+                ("Short", 100)
+            };
+            let number = row.to_string();
+            vec![
+                word(label, 228, top, width, 25),
+                word(&number, 520, top, number.len() as u32 * 15, 25),
+            ]
+        });
+        let grid = reconstruct_table(&varying_labels, 50, 0.5);
+        assert_eq!(grid[0].len(), 7, "the number column must stay its own column: {grid:?}");
+        assert_eq!(grid[3][1], "3");
+
+        let own_header = amount_table_words(
+            vec![
+                word("Item", 228, row_top(0), 71, 25),
+                word("No", 319, row_top(0), 40, 25),
+            ],
+            |row, top| item_and_number(row, top, 20),
+        );
+        let grid = reconstruct_table(&own_header, 50, 0.5);
+        assert_eq!(grid[0][..2], ["Item".to_string(), "No".to_string()]);
+        assert_eq!(grid[5][..2], ["Item".to_string(), "5".to_string()]);
     }
 
     #[test]
