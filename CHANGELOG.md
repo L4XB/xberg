@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **(redaction): findings from an external content-inspection engine can drive redaction.** `RedactionConfig.findings` takes the findings an engine such as Presidio or AWS Comprehend reported over the extracted text, and `findings_path` loads them from a JSON array or JSON Lines file. Each finding's value is redacted at every occurrence in every textual field and reported as `PiiCategory::Custom(label)`. Raw engine output is accepted as is: unknown fields are ignored, and Presidio's `entity_type` and Comprehend's `Type`, `Text`, `BeginOffset`, `EndOffset` and `Score` are read as aliases. A finding without `text` is read from `content` at its offsets, counted in `findings_offset_encoding` units (Unicode code points by default). A finding that cannot be resolved fails the extraction instead of being skipped, and `SecurityLimits.max_redaction_findings` (default 10,000) caps how many a run accepts. `findings_path` is not supported on WebAssembly. (GH#1941)
+
 ## [1.3.0] - 2026-09-28
 
 ### Added
