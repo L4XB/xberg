@@ -524,7 +524,11 @@ fn cached_processor_stages(cache: &ProcessorCache) -> ProcessorStages {
 }
 
 /// Get processors from the cache, organized by stage.
+// ~keep Liveness is configuration-dependent: the only consumers are compiled out on
+// narrow feature legs, so `-D dead-code` fires there and nowhere else. A hand-kept
+// union-of-consumers `cfg` is what drifted here and failed the 1.3.0 publish (GH#1951).
 #[cfg(test)]
+#[allow(dead_code)]
 pub(super) fn get_processors_from_cache() -> Result<ProcessorStages> {
     let cache_lock = PROCESSOR_CACHE.read();
     let cache = cache_lock
@@ -808,6 +812,9 @@ mod tests {
     /// — a property of the test harness, not of the code under test. Emptiness was
     /// only ever scaffolding; the #215 invariant is that a *late* registration becomes
     /// visible, which containment states exactly and races nothing.
+    // ~keep `ProcessorRegistryState` is imported only under `all(test, feature = "tokio-runtime")`;
+    // without the matching gate this test failed to resolve it on every non-tokio leg (GH#1951).
+    #[cfg(feature = "tokio-runtime")]
     #[serial_test::serial]
     #[test]
     fn processor_cache_rebuilds_when_registry_changes_after_first_use() {

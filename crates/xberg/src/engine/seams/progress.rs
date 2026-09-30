@@ -51,8 +51,14 @@ impl ProgressSink for NoopProgressSink {
     fn emit(&self, _event: ProgressEvent) {}
 }
 
+// ~keep Liveness is configuration-dependent: the only consumers are compiled out on
+// narrow feature legs, so `-D dead-code` fires there and nowhere else. A hand-kept
+// union-of-consumers `cfg` is what drifted here and failed the 1.3.0 publish (GH#1951).
+// The fields are written by `scope_progress` (live under `tokio-runtime` alone) but read
+// only by `ProgressContext::emit_ocr_page`, reachable solely from the PDF OCR pipeline.
 #[cfg(feature = "tokio-runtime")]
 #[derive(Clone)]
+#[allow(dead_code)]
 struct ProgressContext {
     sink: std::sync::Arc<dyn ProgressSink>,
     input_index: Option<usize>,
@@ -60,6 +66,7 @@ struct ProgressContext {
 }
 
 #[cfg(feature = "tokio-runtime")]
+#[allow(dead_code)]
 impl ProgressContext {
     fn emit_ocr_page(&self, page: usize, total: usize, backend: &str) {
         let Ok(mut completed_pages) = self.completed_pages.lock() else {
@@ -99,6 +106,7 @@ where
 }
 
 #[cfg(feature = "tokio-runtime")]
+#[allow(dead_code)]
 pub(crate) fn inherit_progress<F>(future: F) -> impl std::future::Future<Output = F::Output>
 where
     F: std::future::Future,
@@ -113,11 +121,13 @@ where
 }
 
 #[cfg(feature = "tokio-runtime")]
+#[allow(dead_code)]
 pub(crate) fn emit_ocr_page(page: usize, total: usize, backend: &str) {
     let _ = CURRENT_PROGRESS.try_with(|context| context.emit_ocr_page(page, total, backend));
 }
 
 #[cfg(not(feature = "tokio-runtime"))]
+#[allow(dead_code)]
 pub(crate) fn emit_ocr_page(_page: usize, _total: usize, _backend: &str) {}
 
 #[cfg(all(test, feature = "tokio-runtime"))]

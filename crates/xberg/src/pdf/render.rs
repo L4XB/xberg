@@ -415,7 +415,11 @@ pub fn take_xberg_native_pdf_render_warnings() -> Vec<ProcessingWarning> {
     ENGINE_PENDING_WARNINGS.with(|pending| std::mem::take(&mut *pending.borrow_mut()))
 }
 
+// ~keep Liveness is configuration-dependent: the only consumers are compiled out on
+// narrow feature legs, so `-D dead-code` fires there and nowhere else. A hand-kept
+// union-of-consumers `cfg` is what drifted here and failed the 1.3.0 publish (GH#1951).
 #[cfg(feature = "pdf")]
+#[allow(dead_code)]
 pub(crate) fn record_render_warning(warning: ProcessingWarning) {
     ENGINE_PENDING_WARNINGS.with(|pending| push_warning_deduped(&mut pending.borrow_mut(), warning));
 }
