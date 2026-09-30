@@ -381,6 +381,11 @@ impl RedactionPass<'_> {
                     self.redact_in_place(cell);
                 }
             }
+            if let Some(columns) = table.columns.as_mut() {
+                for column in columns.iter_mut() {
+                    self.redact_in_place(column);
+                }
+            }
             self.redact_in_place(&mut table.markdown);
         }
     }
@@ -405,6 +410,11 @@ impl RedactionPass<'_> {
                 for row in table.cells.iter_mut() {
                     for cell in row.iter_mut() {
                         self.redact_in_place(cell);
+                    }
+                }
+                if let Some(columns) = table.columns.as_mut() {
+                    for column in columns.iter_mut() {
+                        self.redact_in_place(column);
                     }
                 }
                 self.redact_in_place(&mut table.markdown);
@@ -1267,6 +1277,7 @@ mod tests {
             tables: vec![crate::types::tables::Table {
                 cells: vec![vec!["Name".into(), email.into()]],
                 markdown: format!("| Name | {email} |"),
+                columns: Some(vec!["Name".into(), email.into()]),
                 page_number: 1,
                 bounding_box: None,
                 ..Default::default()
@@ -1274,7 +1285,12 @@ mod tests {
             pages: Some(vec![crate::types::PageContent {
                 page_number: 1,
                 content: format!("Page mentions {email}."),
-                tables: Vec::new(),
+                tables: vec![std::sync::Arc::new(crate::types::tables::Table {
+                    cells: vec![vec!["Name".into(), email.into()]],
+                    markdown: format!("| Name | {email} |"),
+                    columns: Some(vec!["Name".into(), email.into()]),
+                    ..Default::default()
+                })],
                 image_indices: Vec::new(),
                 image_preprocessing: None,
                 hierarchy: None,
@@ -1316,11 +1332,25 @@ mod tests {
         if doc.content.contains(email) {
             leaks.push("content");
         }
-        if doc.tables[0].cells.iter().flatten().any(|c| c.contains(email)) || doc.tables[0].markdown.contains(email) {
+        if doc.tables[0].cells.iter().flatten().any(|c| c.contains(email))
+            || doc.tables[0].markdown.contains(email)
+            || doc.tables[0]
+                .columns
+                .as_ref()
+                .is_some_and(|columns| columns.iter().any(|column| column.contains(email)))
+        {
             leaks.push("tables");
         }
-        if doc.pages.as_ref().unwrap()[0].content.contains(email) {
+        let page = &doc.pages.as_ref().unwrap()[0];
+        if page.content.contains(email) {
             leaks.push("pages");
+        }
+        if page.tables[0]
+            .columns
+            .as_ref()
+            .is_some_and(|columns| columns.iter().any(|column| column.contains(email)))
+        {
+            leaks.push("page.tables");
         }
         let uri = &doc.uris.as_ref().unwrap()[0];
         if uri.url.contains(email) || uri.label.as_deref().unwrap_or("").contains(email) {

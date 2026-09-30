@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **(redaction): structured table column labels no longer retain PII after redaction.** Redaction now rewrites `tables[].columns` and `pages[].tables[].columns` alongside table cells and Markdown, so a header copied into the structured column metadata cannot expose a value removed from the document text. (GH#1991)
 - **(redaction): a validation error raised while redacting now fails the extraction instead of returning the document unredacted.** The pipeline kept a post-processor's validation error as a processing warning and returned the document as extracted, so a redaction run that failed, for example an `Llm` NER backend with no `NerConfig.llm`, handed back the very text it was asked to redact. The redaction processor now reports these as a plugin error, which fails the extraction. (GH#1941)
 - **(mime): large CSS and TOML files with array-like prefixes are no longer mistaken for JSON.** Valid JSON arrays and objects larger than the 4 KiB sniffing window remain detected as JSON. (GH#1982)
 - **(ocr): label-and-value tables no longer disappear when labels contain most of the text.** A two-column grid whose first column contains recurring labels and whose second column is mostly numeric values now bypasses the prose-oriented dominant-column rejection. PaddleOCR also reports structurally rejected table candidates in `processing_warnings` instead of leaving only a debug trace. (GH#1970)
