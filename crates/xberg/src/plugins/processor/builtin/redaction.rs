@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use crate::Result;
 use crate::core::config::ExtractionConfig;
 use crate::plugins::{Plugin, PostProcessor, ProcessingStage, register_post_processor};
-use crate::text::redaction::engine::redact_with_limits;
+use crate::text::redaction::engine::{redact, redact_with_external_findings};
 use crate::types::ExtractedDocument;
 
 /// Redaction post-processor.
@@ -44,8 +44,15 @@ impl Plugin for RedactionProcessor {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl PostProcessor for RedactionProcessor {
     async fn process(&self, result: &mut ExtractedDocument, config: &ExtractionConfig) -> Result<()> {
-        let Some(redaction_config) = config.redaction.as_ref() else {
-            return Ok(());
+        let external = crate::text::redaction::external::current_external_redaction();
+        let default_config;
+        let redaction_config = match config.redaction.as_ref() {
+            Some(config) => config,
+            None if external.is_some() => {
+                default_config = crate::core::config::redaction::RedactionConfig::default();
+                &default_config
+            }
+            None => return Ok(()),
         };
 
         tracing::info!(
@@ -55,19 +62,33 @@ impl PostProcessor for RedactionProcessor {
             "running redaction pipeline"
         );
 
-        let limits = config.security_limits.clone().unwrap_or_default();
-        // The pipeline keeps a `Validation` error as a processing warning and returns
-        // the document as extracted, which would ship the text this run was asked to
-        // redact.
-        redact_with_limits(result, redaction_config, &limits)
-            .await
-            .map_err(|err| match err {
-                crate::XbergError::Validation { .. } => crate::XbergError::Plugin {
-                    message: err.to_string(),
-                    plugin_name: self.name().to_string(),
-                },
-                other => other,
-            })
+        let outcome = match external.as_ref() {
+            Some(request) => {
+                redact_with_external_findings(
+                    result,
+                    redaction_config,
+                    &request.findings,
+                    request.offset_encoding,
+                    request.max_findings,
+                    request.include_configured_sources,
+                )
+                .await
+            }
+            None => redact(result, redaction_config).await,
+        };
+        let outcome = outcome.map_err(|err| match err {
+            crate::XbergError::Validation { .. } => crate::XbergError::Plugin {
+                message: err.to_string(),
+                plugin_name: self.name().to_string(),
+            },
+            other => other,
+        });
+        if outcome.is_ok()
+            && let Some(request) = external
+        {
+            request.mark_consumed();
+        }
+        outcome
     }
 
     fn processing_stage(&self) -> ProcessingStage {
@@ -75,7 +96,7 @@ impl PostProcessor for RedactionProcessor {
     }
 
     fn should_process(&self, _result: &ExtractedDocument, config: &ExtractionConfig) -> bool {
-        config.redaction.is_some()
+        config.redaction.is_some() || crate::text::redaction::external::external_redaction_is_scoped()
     }
 
     fn priority(&self) -> i32 {

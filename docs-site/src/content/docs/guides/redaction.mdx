@@ -127,24 +127,25 @@ Choose the NER backend per the [NER guide](/guides/ner/). The LLM backend can ca
 
 ## External Findings
 
-When another engine has already inspected the extracted text, such as Microsoft Presidio or AWS Comprehend, pass its findings in `RedactionConfig.findings` or point `findings_path` at a JSON array or JSON Lines file of them. Each finding is redacted at every occurrence in every textual field and reported as `PiiCategory::Custom(label)`.
+When another engine has already inspected the extracted text, such as Microsoft Presidio or AWS Comprehend, pass its findings to `extract_with_external_redaction`. The operation runs in the Late redaction stage, before a configured DOCX or PDF renderer, and reports each match as `PiiCategory::Custom(label)`. `redact_external` applies the same rules to an owned `ExtractedDocument`.
 
-```json
-{
-  "redaction": {
-    "findings": [
-      { "label": "PERSON", "text": "John Smith", "score": 0.92 },
-      { "entity_type": "PHONE_NUMBER", "start": 21, "end": 35, "score": 0.85 }
-    ]
-  }
-}
+```rust
+let findings = xberg::text::redaction::parse_external_findings_bounded(raw_json, 10_000)?;
+let output = xberg::extract_with_external_redaction(
+    input,
+    &config,
+    findings,
+    xberg::RedactionOffsetEncoding::UnicodeCodePoints,
+    10_000,
+).await?;
 ```
 
 - `label` is required. Presidio's `entity_type` and Comprehend's `Type` are accepted in its place, as are Comprehend's `Text`, `BeginOffset`, `EndOffset` and `Score`. Other fields are ignored, so raw engine output can be passed unchanged.
-- `text` is the value to redact. Without it, the value is read from `content` at `start..end`, counted in `findings_offset_encoding` units: `unicode_code_points` (the default, as Presidio reports them), `utf8_bytes` or `utf16_code_units`. Offsets only line up with `content` extracted under the same settings, so prefer supplying `text`.
+- `text` is the value to redact. Without it, the value is read from `content` at `start..end`, counted in the requested `RedactionOffsetEncoding`: `UnicodeCodePoints` (as Presidio reports them), `Utf8Bytes` or `Utf16CodeUnits`. Offsets only line up with `content` extracted under the same settings, so prefer supplying `text`.
 - A finding is matched case-sensitively and on word boundaries, like an NER mention. It needs no allowlist and is kept even when `categories` filters out the built-in detectors.
-- Redaction fails rather than skipping a finding it cannot resolve: a span outside `content`, inside a character, or cutting a word, which usually means the wrong `findings_offset_encoding`.
-- `SecurityLimits.max_redaction_findings` caps the inline and file findings combined (default 10,000), and a findings file may not exceed `SecurityLimits.max_content_size`. `findings_path` is not supported on WebAssembly.
+- Redaction fails rather than skipping a finding it cannot resolve: a span outside `content`, inside a character, or cutting a word, which usually means the wrong offset encoding.
+- The caller supplies `max_findings`; the bounded parser stops at the first entry beyond that limit instead of allocating the complete input.
+- The one-step operation accepts one bytes input. Read and bound file or standard-input findings at the application boundary, then pass their parsed values to the operation.
 
 ## Output Shape
 

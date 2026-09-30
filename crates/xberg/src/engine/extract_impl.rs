@@ -190,7 +190,7 @@ async fn extract_uncached(input: ExtractInput, config: &ExtractionConfig) -> Res
 /// merged with any per-input override), so a config or override change is a
 /// guaranteed cache miss.
 fn content_cache_key(input: &ExtractInput, base_config: &ExtractionConfig) -> Option<String> {
-    if input.kind != ExtractInputKind::Bytes {
+    if !base_config.use_cache || input.kind != ExtractInputKind::Bytes {
         return None;
     }
     let bytes = input.bytes.as_deref()?;

@@ -27,8 +27,7 @@
 use std::collections::HashSet;
 
 use crate::Result;
-use crate::core::config::redaction::RedactionConfig;
-use crate::extractors::security::SecurityLimits;
+use crate::core::config::redaction::{ExternalRedactionFinding, RedactionConfig, RedactionOffsetEncoding};
 use crate::types::ExtractedDocument;
 use crate::types::entity::{Entity, EntityCategory};
 use crate::types::metadata::FormatMetadata;
@@ -52,17 +51,39 @@ const MAX_BLOCK_NESTING_DEPTH: usize = 32;
 /// Run pattern redaction (and optional NER-driven redaction) over `result` and
 /// rewrite every textual field. Populates `result.redaction_report`.
 pub async fn redact(result: &mut ExtractedDocument, config: &RedactionConfig) -> Result<()> {
-    redact_with_limits(result, config, &SecurityLimits::default()).await
+    redact_counted(result, config, &[], true).await.map(|_counter| ())
 }
 
-/// [`redact`] with the caller's security limits, which bound the external
-/// findings accepted.
-pub(crate) async fn redact_with_limits(
+/// Redact an owned document using findings from an external inspection engine.
+///
+/// `offset_encoding` defaults to `utf8_bytes` and `max_findings` defaults to
+/// 10,000 when omitted. Unknown encodings return a validation error.
+pub async fn redact_external(
+    mut document: ExtractedDocument,
+    config: RedactionConfig,
+    findings: Vec<ExternalRedactionFinding>,
+    offset_encoding: Option<&str>,
+    max_findings: Option<u32>,
+) -> Result<ExtractedDocument> {
+    let offset_encoding = offset_encoding.unwrap_or("utf8_bytes").parse()?;
+    let max_findings = max_findings.unwrap_or(super::external::DEFAULT_MAX_FINDINGS);
+    let external_terms = compile_external_findings(&document.content, &findings, offset_encoding, max_findings)?;
+    redact_counted(&mut document, &config, &external_terms, true).await?;
+    Ok(document)
+}
+
+pub(crate) async fn redact_with_external_findings(
     result: &mut ExtractedDocument,
     config: &RedactionConfig,
-    limits: &SecurityLimits,
+    findings: &[ExternalRedactionFinding],
+    offset_encoding: RedactionOffsetEncoding,
+    max_findings: u32,
+    include_configured_sources: bool,
 ) -> Result<()> {
-    redact_counted(result, config, limits).await.map(|_counter| ())
+    let external_terms = compile_external_findings(&result.content, findings, offset_encoding, max_findings)?;
+    redact_counted(result, config, &external_terms, include_configured_sources)
+        .await
+        .map(|_counter| ())
 }
 
 /// Like [`redact`], additionally returning the token to original-text map for
@@ -76,7 +97,7 @@ pub async fn redact_capturing_rehydration_map(
     result: &mut ExtractedDocument,
     config: &RedactionConfig,
 ) -> Result<super::rehydration::RehydrationMap> {
-    let counter = redact_counted(result, config, &SecurityLimits::default()).await?;
+    let counter = redact_counted(result, config, &[], true).await?;
     Ok(counter.rehydration_map())
 }
 
@@ -96,8 +117,7 @@ pub fn redact_with_entities(
     entities: &[Entity],
 ) -> Result<()> {
     config.validate()?;
-    let external_terms = compile_external_findings(&result.content, config, &SecurityLimits::default())?;
-    redact_pass(result, config, entities, &external_terms);
+    redact_pass(result, config, entities, &[], true);
     Ok(())
 }
 
@@ -106,20 +126,28 @@ pub fn redact_with_entities(
 async fn redact_counted(
     result: &mut ExtractedDocument,
     config: &RedactionConfig,
-    limits: &SecurityLimits,
+    external_terms: &[(PiiCategory, regex::Regex)],
+    include_configured_sources: bool,
 ) -> Result<TokenCounter> {
     config.validate()?;
-    let external_terms = compile_external_findings(&result.content, config, limits)?;
 
     #[cfg(feature = "ner")]
-    let entities: Vec<Entity> = match &config.ner {
-        Some(ner_config) => collect_ner_entities(&result.content, ner_config, &active_categories(config)).await?,
-        None => Vec::new(),
+    let entities: Vec<Entity> = match (include_configured_sources, &config.ner) {
+        (true, Some(ner_config)) => {
+            collect_ner_entities(&result.content, ner_config, &active_categories(config)).await?
+        }
+        _ => Vec::new(),
     };
     #[cfg(not(feature = "ner"))]
     let entities: Vec<Entity> = Vec::new();
 
-    Ok(redact_pass(result, config, &entities, &external_terms))
+    Ok(redact_pass(
+        result,
+        config,
+        &entities,
+        external_terms,
+        include_configured_sources,
+    ))
 }
 
 /// Rewrite every text-bearing field on `result` and populate its audit report.
@@ -128,11 +156,24 @@ fn redact_pass(
     config: &RedactionConfig,
     entities: &[Entity],
     external_terms: &[(PiiCategory, regex::Regex)],
+    include_configured_sources: bool,
 ) -> TokenCounter {
-    let active = active_categories(config);
+    let active = if include_configured_sources {
+        active_categories(config)
+    } else {
+        HashSet::new()
+    };
     let categories: Vec<PiiCategory> = active.iter().cloned().collect();
-    let custom_regexes = compile_custom(config);
-    let ner_terms = compile_ner_terms(entities, config);
+    let custom_regexes = if include_configured_sources {
+        compile_custom(config)
+    } else {
+        Vec::new()
+    };
+    let ner_terms = if include_configured_sources {
+        compile_ner_terms(entities, config)
+    } else {
+        Vec::new()
+    };
 
     let mut pass = RedactionPass {
         categories: &categories,
@@ -140,6 +181,7 @@ fn redact_pass(
         custom_regexes: &custom_regexes,
         ner_terms: &ner_terms,
         external_terms,
+        include_configured_sources,
         counter: TokenCounter::new(),
         findings: Vec::new(),
     };
@@ -168,6 +210,7 @@ struct RedactionPass<'a> {
     custom_regexes: &'a [(String, regex::Regex)],
     ner_terms: &'a [(PiiCategory, regex::Regex)],
     external_terms: &'a [(PiiCategory, regex::Regex)],
+    include_configured_sources: bool,
     counter: TokenCounter,
     findings: Vec<RedactionFinding>,
 }
@@ -175,7 +218,11 @@ struct RedactionPass<'a> {
 impl RedactionPass<'_> {
     /// Every match in `text`, deduped and in ascending byte order.
     fn matches_for(&self, text: &str) -> Vec<PatternMatch> {
-        let mut matches = scan_text(text, self.categories);
+        let mut matches = if self.include_configured_sources {
+            scan_text(text, self.categories)
+        } else {
+            Vec::new()
+        };
 
         let custom = self
             .custom_regexes

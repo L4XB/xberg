@@ -240,11 +240,15 @@ pub use types::*;
 #[cfg(feature = "office")]
 pub use extraction::office_metadata::{CoreProperties, DocxAppProperties};
 
+#[cfg(feature = "redaction")]
+pub use core::extract::extract_with_external_redaction;
 #[cfg(feature = "url-ingestion")]
 pub use core::extract::map_url;
 pub use core::extract::{extract, extract_batch};
 #[cfg(feature = "pdf")]
 pub use core::split::{SplitConfig, SplitSegment, SplitStrategy, split_and_extract};
+#[cfg(feature = "redaction")]
+pub use text::redaction::redact_external;
 
 pub use core::config::{
     AccelerationConfig, BedrockConfig, CallMode, CaptioningConfig, ChunkClassificationConfig,

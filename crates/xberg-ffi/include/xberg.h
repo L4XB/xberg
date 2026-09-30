@@ -963,6 +963,14 @@ typedef struct XBERGExcelWorkbook XBERGExcelWorkbook;
  */
 typedef struct XBERGExecutionProviderType XBERGExecutionProviderType;
 /**
+ * One finding reported by an external content-inspection engine.
+ *
+ * Unknown fields are ignored, so an engine's raw output can be passed as is.
+ * Presidio's `entity_type` and AWS Comprehend's `Type`, `Text`,
+ * `BeginOffset`, `EndOffset` and `Score` are accepted as aliases.
+ */
+typedef struct XBERGExternalRedactionFinding XBERGExternalRedactionFinding;
+/**
  * Unified extraction input for all public extraction entry points.
  */
 typedef struct XBERGExtractInput XBERGExtractInput;
@@ -2283,6 +2291,10 @@ typedef struct XBERGRedactionConfig XBERGRedactionConfig;
  * One redaction event: which span was rewritten, why, and with what.
  */
 typedef struct XBERGRedactionFinding XBERGRedactionFinding;
+/**
+ * Unit that an external finding's `start` / `end` offsets count in.
+ */
+typedef struct XBERGRedactionOffsetEncoding XBERGRedactionOffsetEncoding;
 /**
  * One user-supplied regex pattern to redact.
  *
@@ -10709,6 +10721,105 @@ char *xberg_excel_workbook_metadata(XBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *xberg_excel_workbook_revisions(XBERGAlefHandle handle);
+
+/**
+ * Create a `ExternalRedactionFinding` from a JSON string. Returns null on
+ * failure. # Safety JSON string must be valid UTF-8 and null-terminated.
+ * Returned handle must be freed with `xberg_external_redaction_finding_free`.
+ */
+XBERGAlefHandle xberg_external_redaction_finding_from_json(const char *json);
+
+/**
+ * Serialize a `ExternalRedactionFinding` to a JSON string. Returns null on
+ * failure. # Safety `handle` must be a valid, non-zero handle returned by a
+ * `xberg` function. The returned string must be freed with `xberg_free_string`.
+ */
+char *xberg_external_redaction_finding_to_json(XBERGAlefHandle handle);
+
+/**
+ * Free a `ExternalRedactionFinding` handle.
+ * # Safety
+ * Handle must have been returned by this library, or be zero.
+ */
+void xberg_external_redaction_finding_free(XBERGAlefHandle handle);
+
+/**
+ * Get the `label` field from a `ExternalRedactionFinding`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `xberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *xberg_external_redaction_finding_label(XBERGAlefHandle handle);
+
+/**
+ * Get the `text` field from a `ExternalRedactionFinding`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `xberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *xberg_external_redaction_finding_text(XBERGAlefHandle handle);
+
+/**
+ * Get the `start` field from a `ExternalRedactionFinding`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint32_t xberg_external_redaction_finding_start(XBERGAlefHandle handle);
+
+/**
+ * Report whether the `start` field on a `ExternalRedactionFinding` is `Some`.
+ *
+ * `xberg_external_redaction_finding_start` cannot distinguish a `None` field
+ * from a legitimate zero-valued `Some` at the C ABI boundary -- there is no
+ * null representation for a numeric return, so both collapse to the same
+ * sentinel. Call this function first: `1` means the field getter's return value
+ * is meaningful, `0` means the field is absent and the getter's sentinel must
+ * be ignored, `-1` reports an invalid handle (see `xberg_last_error_code`). #
+ * Safety Pointer must be a valid handle returned by this library.
+ */
+int32_t xberg_external_redaction_finding_has_start(XBERGAlefHandle handle);
+
+/**
+ * Get the `end` field from a `ExternalRedactionFinding`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint32_t xberg_external_redaction_finding_end(XBERGAlefHandle handle);
+
+/**
+ * Report whether the `end` field on a `ExternalRedactionFinding` is `Some`.
+ *
+ * `xberg_external_redaction_finding_end` cannot distinguish a `None` field from
+ * a legitimate zero-valued `Some` at the C ABI boundary -- there is no null
+ * representation for a numeric return, so both collapse to the same sentinel.
+ * Call this function first: `1` means the field getter's return value is
+ * meaningful, `0` means the field is absent and the getter's sentinel must be
+ * ignored, `-1` reports an invalid handle (see `xberg_last_error_code`). #
+ * Safety Pointer must be a valid handle returned by this library.
+ */
+int32_t xberg_external_redaction_finding_has_end(XBERGAlefHandle handle);
+
+/**
+ * Get the `score` field from a `ExternalRedactionFinding`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+float xberg_external_redaction_finding_score(XBERGAlefHandle handle);
+
+/**
+ * Report whether the `score` field on a `ExternalRedactionFinding` is `Some`.
+ *
+ * `xberg_external_redaction_finding_score` cannot distinguish a `None` field
+ * from a legitimate zero-valued `Some` at the C ABI boundary -- there is no
+ * null representation for a numeric return, so both collapse to the same
+ * sentinel. Call this function first: `1` means the field getter's return value
+ * is meaningful, `0` means the field is absent and the getter's sentinel must
+ * be ignored, `-1` reports an invalid handle (see `xberg_last_error_code`). #
+ * Safety Pointer must be a valid handle returned by this library.
+ */
+int32_t xberg_external_redaction_finding_has_score(XBERGAlefHandle handle);
 
 /**
  * Create a `ExtractInput` from a JSON string. Returns null on failure.
@@ -27426,6 +27537,20 @@ int32_t xberg_processing_stage_from_i32(int32_t value);
 int32_t xberg_processing_stage_from_str(const char *name);
 
 /**
+ * Convert an integer to a `RedactionOffsetEncoding` variant. Returns -1 on
+ * invalid input. # Safety Caller must ensure all pointer arguments are valid or
+ * null. Returned pointers must be freed with the appropriate free function.
+ */
+int32_t xberg_redaction_offset_encoding_from_i32(int32_t value);
+
+/**
+ * Convert a `RedactionOffsetEncoding` serde wire value (C string) to its
+ * integer discriminant. Returns -1 on invalid input. # Safety Caller must
+ * ensure `ptr` is a valid pointer to a `c_char` or null.
+ */
+int32_t xberg_redaction_offset_encoding_from_str(const char *name);
+
+/**
  * Convert an integer to a `RedactionStrategy` variant. Returns -1 on invalid
  * input. # Safety Caller must ensure all pointer arguments are valid or null.
  * Returned pointers must be freed with the appropriate free function.
@@ -29979,6 +30104,21 @@ XBERGAlefHandle xberg_extract(XBERGAlefHandle input, XBERGAlefHandle config);
  */
 XBERGAlefHandle xberg_extract_batch(const char *inputs, XBERGAlefHandle config);
 
+#if defined(XBERG_FEATURE_REDACTION)
+/**
+ * Extract one bytes input and redact findings from an external inspection
+ * engine.
+ *
+ * `offset_encoding` defaults to `utf8_bytes` and `max_findings` defaults to
+ * 10,000 when omitted. Unknown encodings return a validation error.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
+ */
+XBERGAlefHandle xberg_extract_with_external_redaction(
+    XBERGAlefHandle input, XBERGAlefHandle config, const char *findings,
+    const char *offset_encoding, uint32_t max_findings);
+#endif
+
 #if defined(XBERG_FEATURE_MARKDOWN_FOOTNOTES)
 /**
  * Find unmarked claims in markdown text.
@@ -30430,6 +30570,22 @@ int32_t xberg_ocr_backend_supports_language_for(const char *backend,
  */
 uintptr_t xberg_pdf_page_count(const uint8_t *pdf_bytes,
                                uintptr_t pdf_bytes_len, const char *password);
+#endif
+
+#if defined(XBERG_FEATURE_REDACTION)
+/**
+ * Redact an owned document using findings from an external inspection engine.
+ *
+ * `offset_encoding` defaults to `utf8_bytes` and `max_findings` defaults to
+ * 10,000 when omitted. Unknown encodings return a validation error.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
+ */
+XBERGAlefHandle xberg_redact_external(XBERGAlefHandle document,
+                                      XBERGAlefHandle config,
+                                      const char *findings,
+                                      const char *offset_encoding,
+                                      uint32_t max_findings);
 #endif
 
 #if defined(XBERG_FEATURE_MARKDOWN_FOOTNOTES)

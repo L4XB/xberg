@@ -1889,6 +1889,9 @@ custom_rust_modules = ["bridge", "engine"]
 extra_features = ["sceptre-wasm"]
 exclude_types = ["OcrFallbackDecision", "OcrProcessor", "OcrCacheStats", "TessdataManager", "PageLayoutResult"]
 exclude_functions = [
+  # Request-scoped extraction uses Tokio task-local state; browser callers can
+  # apply owned findings with `redact_external` instead. ~keep
+  "extract_with_external_redaction",
   "embed_texts",
   "embed_text",
   "detect_layout",
@@ -3429,7 +3432,7 @@ result_var = "result"
 async = true
 returns_result = true
 args = [
-  { name = "input", field = "input", type = "json_object", owned = true, go_type = "ExtractInput", element_type = "ExtractInput" },
+  { name = "input", field = "input.extract_input", type = "json_object", owned = true, go_type = "ExtractInput", element_type = "ExtractInput" },
   { name = "config", field = "config", type = "json_object", optional = true },
 ]
 
@@ -3536,6 +3539,35 @@ from_json_module = "xberg._xberg"
 [crates.e2e.calls.extract.overrides.node]
 options_type = "ExtractionConfig"
 enum_fields = { chunker_type = "ChunkerType" }
+
+[crates.e2e.calls.extract_with_external_redaction]
+function = "extract_with_external_redaction"
+module = "xberg"
+async = true
+returns_result = true
+streaming = false
+args = [
+  { name = "input", field = "input", type = "json_object", owned = true, go_type = "ExtractInput", element_type = "ExtractInput" },
+  { name = "config", field = "config", type = "json_object" },
+  { name = "findings", field = "input.findings", type = "json_object", owned = true, go_type = "ExternalRedactionFinding", element_type = "ExternalRedactionFinding" },
+  { name = "offset_encoding", field = "input.offset_encoding", type = "string", optional = true },
+  { name = "max_findings", field = "input.max_findings", type = "u32", optional = true },
+]
+
+[crates.e2e.calls.extract_with_external_redaction.overrides.python]
+module = "xberg"
+function = "extract_with_external_redaction"
+options_type = "ExtractionConfig"
+options_via = "from_json"
+from_json_module = "xberg._xberg"
+
+[crates.e2e.calls.extract_with_external_redaction.overrides.node]
+module = "xberg"
+function = "extractWithExternalRedaction"
+options_type = "ExtractionConfig"
+
+[crates.e2e.calls.extract_with_external_redaction.overrides.swift]
+unnamed_arg_indices = [0, 1, 2, 3, 4]
 
 [crates.e2e.calls.list_supported_formats]
 result_is_simple = true

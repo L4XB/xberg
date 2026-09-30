@@ -10,7 +10,7 @@ use crate::Result;
 use crate::types::redaction::{PiiCategory, RedactionStrategy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::str::FromStr;
 
 /// Configuration for the redaction post-processor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -53,25 +53,6 @@ pub struct RedactionConfig {
     /// at config-construction time via [`RedactionConfig::validate`].
     #[serde(default)]
     pub custom_patterns: Vec<RedactionPattern>,
-    /// Findings produced by an external content-inspection engine (Presidio,
-    /// AWS Comprehend, ...) over this document's extracted text.
-    ///
-    /// Each finding's literal value is redacted at every occurrence in every
-    /// textual field, surfacing as `PiiCategory::Custom(label)`. Unlike
-    /// [`ner`](Self::ner) labels, finding labels need no allowlist: the caller
-    /// supplied them explicitly.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub findings: Vec<ExternalRedactionFinding>,
-    /// JSON array or JSON Lines file of findings, loaded when redaction runs
-    /// and merged with [`findings`](Self::findings). Not supported on
-    /// `wasm32`, which has no filesystem.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "api", schema(value_type = Option<String>))]
-    pub findings_path: Option<PathBuf>,
-    /// How a finding's `start` / `end` count into `content`. Only consulted
-    /// for findings without `text`.
-    #[serde(default)]
-    pub findings_offset_encoding: RedactionOffsetEncoding,
 }
 
 /// One finding reported by an external content-inspection engine.
@@ -86,7 +67,7 @@ pub struct ExternalRedactionFinding {
     #[serde(alias = "entity_type", alias = "Type")]
     pub label: String,
     /// Literal value to redact. When absent, it is read from `content` at
-    /// `start..end` under [`RedactionConfig::findings_offset_encoding`].
+    /// `start..end` under the requested [`RedactionOffsetEncoding`].
     #[serde(default, alias = "Text", skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// Start offset (inclusive) into `content`.
@@ -140,6 +121,21 @@ pub enum RedactionOffsetEncoding {
     UnicodeCodePoints,
     /// UTF-16 code unit offsets.
     Utf16CodeUnits,
+}
+
+impl FromStr for RedactionOffsetEncoding {
+    type Err = crate::XbergError;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "utf8_bytes" => Ok(Self::Utf8Bytes),
+            "unicode_code_points" => Ok(Self::UnicodeCodePoints),
+            "utf16_code_units" => Ok(Self::Utf16CodeUnits),
+            _ => Err(crate::XbergError::validation(format!(
+                "unsupported redaction offset encoding `{value}`; expected utf8_bytes, unicode_code_points, or utf16_code_units"
+            ))),
+        }
+    }
 }
 
 fn default_preserve_offsets() -> bool {
@@ -227,9 +223,6 @@ impl Default for RedactionConfig {
             preserve_offsets: true,
             custom_terms: Vec::new(),
             custom_patterns: Vec::new(),
-            findings: Vec::new(),
-            findings_path: None,
-            findings_offset_encoding: RedactionOffsetEncoding::default(),
         }
     }
 }
@@ -242,9 +235,6 @@ impl RedactionConfig {
     /// the caller can reject the config before the redaction pipeline runs.
     /// Pure terms (regex-escaped) cannot fail to compile, but the function
     /// still rejects empty values to avoid degenerate zero-length matches.
-    /// Inline [`findings`](Self::findings) are checked for shape here; their
-    /// offsets, and anything loaded from `findings_path`, are resolved when
-    /// redaction runs.
     pub fn validate(&self) -> Result<()> {
         for term in &self.custom_terms {
             if term.value.is_empty() {
@@ -272,15 +262,6 @@ impl RedactionConfig {
                     pattern.label
                 )));
             }
-        }
-        for (index, finding) in self.findings.iter().enumerate() {
-            finding.validate(&format!("RedactionConfig.findings[{index}]"))?;
-        }
-        #[cfg(target_arch = "wasm32")]
-        if self.findings_path.is_some() {
-            return Err(crate::XbergError::validation(
-                "RedactionConfig.findings_path is not supported on wasm32; pass findings inline".to_string(),
-            ));
         }
         Ok(())
     }

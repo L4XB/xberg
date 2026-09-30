@@ -9,6 +9,8 @@
 use std::sync::LazyLock;
 
 use crate::Result;
+#[cfg(feature = "redaction")]
+use crate::core::config::ExternalRedactionFinding;
 #[cfg(feature = "url-ingestion")]
 use crate::core::config::UrlExtractionConfig;
 use crate::core::config::{ExtractInput, ExtractionConfig, ExtractionResult};
@@ -22,6 +24,24 @@ static DEFAULT_ENGINE: LazyLock<crate::engine::Engine> = LazyLock::new(crate::en
 /// Extract content from a single bytes or URI input.
 pub async fn extract(input: ExtractInput, config: &ExtractionConfig) -> Result<ExtractionResult> {
     DEFAULT_ENGINE.extract(input, config).await
+}
+
+/// Extract one bytes input and redact findings from an external inspection engine.
+///
+/// `offset_encoding` defaults to `utf8_bytes` and `max_findings` defaults to
+/// 10,000 when omitted. Unknown encodings return a validation error.
+#[cfg(feature = "redaction")]
+pub async fn extract_with_external_redaction(
+    input: ExtractInput,
+    config: &ExtractionConfig,
+    findings: Vec<ExternalRedactionFinding>,
+    offset_encoding: Option<&str>,
+    max_findings: Option<u32>,
+) -> Result<ExtractionResult> {
+    let offset_encoding = offset_encoding.unwrap_or("utf8_bytes").parse()?;
+    DEFAULT_ENGINE
+        .extract_with_external_redaction(input, config, findings, offset_encoding, max_findings)
+        .await
 }
 
 /// Extract content from multiple bytes or URI inputs.

@@ -190,6 +190,12 @@ public func verifyExcerpt<GenericIntoRustString: IntoRustString>(_ excerpt: Gene
 public func pdfPageCount<GenericIntoRustString: IntoRustString>(_ pdf_bytes: RustVec<UInt8>, _ password: Optional<GenericIntoRustString>) throws -> UInt {
     try { let val = __swift_bridge__$pdf_page_count({ let val = pdf_bytes; val.isOwned = false; return val.ptr }(), { if let rustString = optionalStringIntoRustString(password) { rustString.isOwned = false; return rustString.ptr } else { return nil } }()); switch val.tag { case __swift_bridge__$ResultUIntAndString$ResultOk: return val.payload.ok case __swift_bridge__$ResultUIntAndString$ResultErr: throw RustString(ptr: val.payload.err) default: fatalError() } }()
 }
+public func extractWithExternalRedaction<GenericIntoRustString: IntoRustString>(_ input: ExtractInput, _ config: ExtractionConfig, _ findings: RustVec<ExternalRedactionFinding>, _ offset_encoding: Optional<GenericIntoRustString>, _ max_findings: Optional<UInt32>) throws -> ExtractionResult {
+    try { let val = __swift_bridge__$extract_with_external_redaction({input.isOwned = false; return input.ptr;}(), {config.isOwned = false; return config.ptr;}(), { let val = findings; val.isOwned = false; return val.ptr }(), { if let rustString = optionalStringIntoRustString(offset_encoding) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), max_findings.intoFfiRepr()); if val.is_ok { return ExtractionResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
+public func redactExternal<GenericIntoRustString: IntoRustString>(_ document: ExtractedDocument, _ config: RedactionConfig, _ findings: RustVec<ExternalRedactionFinding>, _ offset_encoding: Optional<GenericIntoRustString>, _ max_findings: Optional<UInt32>) throws -> ExtractedDocument {
+    try { let val = __swift_bridge__$redact_external({document.isOwned = false; return document.ptr;}(), {config.isOwned = false; return config.ptr;}(), { let val = findings; val.isOwned = false; return val.ptr }(), { if let rustString = optionalStringIntoRustString(offset_encoding) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), max_findings.intoFfiRepr()); if val.is_ok { return ExtractedDocument(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
 public func mapUrl<GenericIntoRustString: IntoRustString>(_ uri: GenericIntoRustString, _ config: UrlExtractionConfig) throws -> MapResult {
     try { let val = __swift_bridge__$map_url({ let rustString = uri.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), {config.isOwned = false; return config.ptr;}()); if val.is_ok { return MapResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
@@ -790,6 +796,9 @@ public func errorMetadataFromJson<GenericIntoRustString: IntoRustString>(_ json:
 }
 public func excelSheetFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ExcelSheet {
     try { let val = __swift_bridge__$excel_sheet_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ExcelSheet(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
+public func externalRedactionFindingFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ExternalRedactionFinding {
+    try { let val = __swift_bridge__$external_redaction_finding_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ExternalRedactionFinding(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
 public func extractInputFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ExtractInput {
     try { let val = __swift_bridge__$extract_input_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ExtractInput(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
@@ -1568,6 +1577,9 @@ public func probeStatusFromJson<GenericIntoRustString: IntoRustString>(_ json: G
 public func processingStageFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ProcessingStage {
     try { let val = __swift_bridge__$processing_stage_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ProcessingStage(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
+public func redactionOffsetEncodingFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> RedactionOffsetEncoding {
+    try { let val = __swift_bridge__$redaction_offset_encoding_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return RedactionOffsetEncoding(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
 public func redactionStrategyFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> RedactionStrategy {
     try { let val = __swift_bridge__$redaction_strategy_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return RedactionStrategy(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
@@ -1792,6 +1804,9 @@ public func __alef_phantom_vec_excel_sheet() -> RustVec<ExcelSheet> {
 }
 public func __alef_phantom_vec_excel_workbook() -> RustVec<ExcelWorkbook> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_excel_workbook())
+}
+public func __alef_phantom_vec_external_redaction_finding() -> RustVec<ExternalRedactionFinding> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_external_redaction_finding())
 }
 public func __alef_phantom_vec_extract_input() -> RustVec<ExtractInput> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_extract_input())
@@ -2326,6 +2341,9 @@ public func __alef_phantom_vec_probe_status() -> RustVec<ProbeStatus> {
 }
 public func __alef_phantom_vec_processing_stage() -> RustVec<ProcessingStage> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_processing_stage())
+}
+public func __alef_phantom_vec_redaction_offset_encoding() -> RustVec<RedactionOffsetEncoding> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_redaction_offset_encoding())
 }
 public func __alef_phantom_vec_redaction_strategy() -> RustVec<RedactionStrategy> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_redaction_strategy())
@@ -10362,6 +10380,107 @@ extension ExcelWorkbook: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_ExcelWorkbook$len(vecPtr)
+    }
+}
+
+
+public class ExternalRedactionFinding: ExternalRedactionFindingRefMut {
+    public var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$ExternalRedactionFinding$_free(ptr)
+        }
+    }
+}
+extension ExternalRedactionFinding {
+    public convenience init<GenericIntoRustString: IntoRustString>(_ label: GenericIntoRustString, _ text: Optional<GenericIntoRustString>, _ start: Optional<UInt32>, _ end: Optional<UInt32>, _ score: Optional<Float>) {
+        self.init(ptr: __swift_bridge__$ExternalRedactionFinding$new({ let rustString = label.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { if let rustString = optionalStringIntoRustString(text) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), start.intoFfiRepr(), end.intoFfiRepr(), score.intoFfiRepr()))
+    }
+}
+public class ExternalRedactionFindingRefMut: ExternalRedactionFindingRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class ExternalRedactionFindingRef {
+    public var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension ExternalRedactionFindingRef {
+    public func label() -> RustString {
+        RustString(ptr: __swift_bridge__$ExternalRedactionFinding$label(ptr))
+    }
+
+    public func text() -> Optional<RustString> {
+        { let val = __swift_bridge__$ExternalRedactionFinding$text(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
+    public func start() -> Optional<UInt32> {
+        __swift_bridge__$ExternalRedactionFinding$start(ptr).intoSwiftRepr()
+    }
+
+    public func end() -> Optional<UInt32> {
+        __swift_bridge__$ExternalRedactionFinding$end(ptr).intoSwiftRepr()
+    }
+
+    public func score() -> Optional<Float> {
+        __swift_bridge__$ExternalRedactionFinding$score(ptr).intoSwiftRepr()
+    }
+}
+extension ExternalRedactionFinding: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_ExternalRedactionFinding$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_ExternalRedactionFinding$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: ExternalRedactionFinding) {
+        __swift_bridge__$Vec_ExternalRedactionFinding$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_ExternalRedactionFinding$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (ExternalRedactionFinding(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<ExternalRedactionFindingRef> {
+        let pointer = __swift_bridge__$Vec_ExternalRedactionFinding$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return ExternalRedactionFindingRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<ExternalRedactionFindingRefMut> {
+        let pointer = __swift_bridge__$Vec_ExternalRedactionFinding$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return ExternalRedactionFindingRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<ExternalRedactionFindingRef> {
+        UnsafePointer<ExternalRedactionFindingRef>(OpaquePointer(__swift_bridge__$Vec_ExternalRedactionFinding$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_ExternalRedactionFinding$len(vecPtr)
     }
 }
 
@@ -34014,6 +34133,86 @@ extension ProcessingStage: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_ProcessingStage$len(vecPtr)
+    }
+}
+
+
+public class RedactionOffsetEncoding: RedactionOffsetEncodingRefMut {
+    public var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$RedactionOffsetEncoding$_free(ptr)
+        }
+    }
+}
+public class RedactionOffsetEncodingRefMut: RedactionOffsetEncodingRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class RedactionOffsetEncodingRef {
+    public var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension RedactionOffsetEncodingRef {
+    public func to_string() -> RustString {
+        RustString(ptr: __swift_bridge__$RedactionOffsetEncoding$to_string(ptr))
+    }
+}
+extension RedactionOffsetEncoding: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_RedactionOffsetEncoding$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_RedactionOffsetEncoding$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: RedactionOffsetEncoding) {
+        __swift_bridge__$Vec_RedactionOffsetEncoding$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_RedactionOffsetEncoding$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (RedactionOffsetEncoding(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RedactionOffsetEncodingRef> {
+        let pointer = __swift_bridge__$Vec_RedactionOffsetEncoding$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RedactionOffsetEncodingRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RedactionOffsetEncodingRefMut> {
+        let pointer = __swift_bridge__$Vec_RedactionOffsetEncoding$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RedactionOffsetEncodingRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<RedactionOffsetEncodingRef> {
+        UnsafePointer<RedactionOffsetEncodingRef>(OpaquePointer(__swift_bridge__$Vec_RedactionOffsetEncoding$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_RedactionOffsetEncoding$len(vecPtr)
     }
 }
 

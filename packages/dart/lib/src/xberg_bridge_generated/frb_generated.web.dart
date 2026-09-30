@@ -1332,6 +1332,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ExecutionProviderType dco_decode_execution_provider_type(dynamic raw);
 
   @protected
+  ExternalRedactionFinding dco_decode_external_redaction_finding(dynamic raw);
+
+  @protected
   ExtractInput dco_decode_extract_input(dynamic raw);
 
   @protected
@@ -1656,6 +1659,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ExcelSheet> dco_decode_list_excel_sheet(dynamic raw);
+
+  @protected
+  List<ExternalRedactionFinding> dco_decode_list_external_redaction_finding(
+    dynamic raw,
+  );
 
   @protected
   List<ExtractInput> dco_decode_list_extract_input(dynamic raw);
@@ -2671,6 +2679,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RedactionFinding dco_decode_redaction_finding(dynamic raw);
+
+  @protected
+  RedactionOffsetEncoding dco_decode_redaction_offset_encoding(dynamic raw);
 
   @protected
   RedactionPattern dco_decode_redaction_pattern(dynamic raw);
@@ -4209,6 +4220,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ExternalRedactionFinding sse_decode_external_redaction_finding(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ExtractInput sse_decode_extract_input(SseDeserializer deserializer);
 
   @protected
@@ -4605,6 +4621,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ExcelSheet> sse_decode_list_excel_sheet(SseDeserializer deserializer);
+
+  @protected
+  List<ExternalRedactionFinding> sse_decode_list_external_redaction_finding(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<ExtractInput> sse_decode_list_extract_input(
@@ -5926,6 +5947,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RedactionFinding sse_decode_redaction_finding(SseDeserializer deserializer);
+
+  @protected
+  RedactionOffsetEncoding sse_decode_redaction_offset_encoding(
+    SseDeserializer deserializer,
+  );
 
   @protected
   RedactionPattern sse_decode_redaction_pattern(SseDeserializer deserializer);
@@ -7989,6 +8015,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_external_redaction_finding(
+    ExternalRedactionFinding self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_extract_input(ExtractInput self, SseSerializer serializer);
 
   @protected
@@ -8516,6 +8548,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_excel_sheet(
     List<ExcelSheet> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_external_redaction_finding(
+    List<ExternalRedactionFinding> self,
     SseSerializer serializer,
   );
 
@@ -10157,6 +10195,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_redaction_finding(
     RedactionFinding self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_redaction_offset_encoding(
+    RedactionOffsetEncoding self,
     SseSerializer serializer,
   );
 

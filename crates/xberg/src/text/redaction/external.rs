@@ -1,52 +1,174 @@
 //! Findings supplied by an external content-inspection engine.
-//!
-//! An engine such as Presidio or AWS Comprehend reports what it found in the
-//! extracted text. Each finding is resolved to its literal value and compiled
-//! into the same word-boundary-anchored matcher NER mentions use, so it is
-//! redacted at every occurrence in every field (xberg-io/xberg#1941).
-//!
-//! A finding that cannot be resolved fails the run instead of being skipped,
-//! because a skipped finding is a value left unredacted.
 
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "tokio-runtime")]
+use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::Result;
-use crate::XbergError;
-use crate::core::config::redaction::{ExternalRedactionFinding, RedactionConfig, RedactionOffsetEncoding};
-use crate::extractors::security::SecurityLimits;
+use serde::Deserializer;
+use serde::de::{IgnoredAny, SeqAccess, Visitor};
+
+use crate::core::config::redaction::{ExternalRedactionFinding, RedactionOffsetEncoding};
 use crate::types::redaction::PiiCategory;
+use crate::{Result, XbergError};
 
 use super::engine::literal_regex;
 
-/// Parse findings from a JSON array or from JSON Lines, one finding per line.
-#[cfg_attr(alef, alef(skip))]
-pub fn parse_external_findings(text: &str) -> Result<Vec<ExternalRedactionFinding>> {
-    if text.trim_start().starts_with('[') {
-        return serde_json::from_str(text)
-            .map_err(|err| XbergError::validation(format!("redaction findings: invalid JSON array: {err}")));
-    }
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.trim().is_empty())
-        .map(|(index, line)| {
-            serde_json::from_str(line).map_err(|err| {
-                XbergError::validation(format!("redaction findings: invalid JSON on line {}: {err}", index + 1))
-            })
-        })
-        .collect()
+pub(crate) const DEFAULT_MAX_FINDINGS: u32 = 10_000;
+
+#[derive(Clone)]
+pub(crate) struct ExternalRedactionRequest {
+    pub(crate) findings: Arc<[ExternalRedactionFinding]>,
+    pub(crate) offset_encoding: RedactionOffsetEncoding,
+    pub(crate) max_findings: u32,
+    pub(crate) include_configured_sources: bool,
+    consumed: Arc<AtomicBool>,
 }
 
-/// Resolve every inline and file-loaded finding to a `(category, matcher)` pair.
-///
-/// Inline findings must already have passed [`RedactionConfig::validate`].
+impl ExternalRedactionRequest {
+    #[cfg(feature = "tokio-runtime")]
+    pub(crate) fn new(
+        findings: Vec<ExternalRedactionFinding>,
+        offset_encoding: RedactionOffsetEncoding,
+        max_findings: u32,
+        include_configured_sources: bool,
+    ) -> Self {
+        Self {
+            findings: findings.into(),
+            offset_encoding,
+            max_findings,
+            include_configured_sources,
+            consumed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub(crate) fn mark_consumed(&self) {
+        self.consumed.store(true, Ordering::Release);
+    }
+
+    #[cfg(feature = "tokio-runtime")]
+    pub(crate) fn was_consumed(&self) -> bool {
+        self.consumed.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(feature = "tokio-runtime")]
+tokio::task_local! {
+    static EXTERNAL_REDACTION_REQUEST: ExternalRedactionRequest;
+}
+
+#[cfg(feature = "tokio-runtime")]
+pub(crate) async fn scope_external_redaction<F, T>(request: ExternalRedactionRequest, future: F) -> T
+where
+    F: Future<Output = T>,
+{
+    EXTERNAL_REDACTION_REQUEST.scope(request, future).await
+}
+
+#[cfg(feature = "tokio-runtime")]
+pub(crate) fn current_external_redaction() -> Option<ExternalRedactionRequest> {
+    EXTERNAL_REDACTION_REQUEST.try_with(Clone::clone).ok()
+}
+
+#[cfg(not(feature = "tokio-runtime"))]
+pub(crate) fn current_external_redaction() -> Option<ExternalRedactionRequest> {
+    None
+}
+
+#[cfg(feature = "tokio-runtime")]
+pub(crate) fn external_redaction_is_scoped() -> bool {
+    EXTERNAL_REDACTION_REQUEST.try_with(|_| ()).is_ok()
+}
+
+#[cfg(not(feature = "tokio-runtime"))]
+pub(crate) fn external_redaction_is_scoped() -> bool {
+    false
+}
+
+/// Parse at most `max_findings` findings from a JSON array or JSON Lines.
+#[cfg_attr(alef, alef(skip))]
+pub fn parse_external_findings_bounded(text: &str, max_findings: u32) -> Result<Vec<ExternalRedactionFinding>> {
+    let max_findings = max_findings as usize;
+    if text.trim_start().starts_with('[') {
+        let mut deserializer = serde_json::Deserializer::from_str(text);
+        let findings = deserializer
+            .deserialize_seq(BoundedFindingsVisitor { max_findings })
+            .map_err(|error| XbergError::validation(format!("redaction findings: invalid JSON array: {error}")))?;
+        deserializer
+            .end()
+            .map_err(|error| XbergError::validation(format!("redaction findings: invalid JSON array: {error}")))?;
+        return Ok(findings);
+    }
+
+    let mut findings = Vec::new();
+    for (index, line) in text.lines().enumerate().filter(|(_, line)| !line.trim().is_empty()) {
+        if findings.len() == max_findings {
+            return Err(finding_limit_error(max_findings));
+        }
+        findings.push(serde_json::from_str(line).map_err(|error| {
+            XbergError::validation(format!(
+                "redaction findings: invalid JSON on line {}: {error}",
+                index + 1
+            ))
+        })?);
+    }
+    Ok(findings)
+}
+
+struct BoundedFindingsVisitor {
+    max_findings: usize,
+}
+
+impl<'de> Visitor<'de> for BoundedFindingsVisitor {
+    type Value = Vec<ExternalRedactionFinding>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "a JSON array with at most {} findings", self.max_findings)
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let capacity = sequence.size_hint().unwrap_or(0).min(self.max_findings);
+        let mut findings = Vec::with_capacity(capacity);
+        loop {
+            if findings.len() == self.max_findings {
+                if sequence.next_element::<IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "findings exceed maximum of {}",
+                        self.max_findings
+                    )));
+                }
+                break;
+            }
+            match sequence.next_element()? {
+                Some(finding) => findings.push(finding),
+                None => break,
+            }
+        }
+        Ok(findings)
+    }
+}
+
+fn finding_limit_error(max_findings: usize) -> XbergError {
+    XbergError::validation(format!("redaction findings exceed maximum of {max_findings}"))
+}
+
 pub(super) fn compile_external_findings(
     content: &str,
-    config: &RedactionConfig,
-    limits: &SecurityLimits,
+    findings: &[ExternalRedactionFinding],
+    offset_encoding: RedactionOffsetEncoding,
+    max_findings: u32,
 ) -> Result<Vec<(PiiCategory, regex::Regex)>> {
-    let loaded = load_bounded_findings(config, limits)?;
-    let inline_count = config.findings.len();
-    let findings: Vec<&ExternalRedactionFinding> = config.findings.iter().chain(&loaded).collect();
+    if findings.len() > max_findings as usize {
+        return Err(finding_limit_error(max_findings as usize));
+    }
+    for (index, finding) in findings.iter().enumerate() {
+        finding.validate(&format!("external findings[{index}]"))?;
+    }
+
     let mut wanted: Vec<usize> = findings
         .iter()
         .filter(|finding| finding.text.is_none())
@@ -54,14 +176,14 @@ pub(super) fn compile_external_findings(
         .flatten()
         .map(|offset| offset as usize)
         .collect();
-    let byte_offsets = byte_offsets(content, config.findings_offset_encoding, &mut wanted);
+    let byte_offsets = byte_offsets(content, offset_encoding, &mut wanted);
 
     let mut compiled: HashMap<&str, regex::Regex> = HashMap::new();
     let mut seen: HashSet<(PiiCategory, &str)> = HashSet::new();
-    let mut out = Vec::new();
+    let mut output = Vec::new();
     for (index, finding) in findings.iter().enumerate() {
-        let location = location(index, inline_count);
-        let (literal, anchor) = resolve_literal(content, finding, &byte_offsets, config, &location)?;
+        let location = format!("external findings[{index}]");
+        let (literal, anchor) = resolve_literal(content, finding, &byte_offsets, offset_encoding, &location)?;
         let regex = match compiled.get(literal) {
             Some(regex) => regex.clone(),
             None => {
@@ -74,55 +196,29 @@ pub(super) fn compile_external_findings(
                 regex
             }
         };
-        // A span that cuts a word yields a literal the word-boundary matcher
-        // never finds, which would leave the value unredacted. A mismatched
-        // `findings_offset_encoding` is the usual cause.
         if let Some(anchor) = anchor
             && regex.find_at(content, anchor).map(|found| found.start()) != Some(anchor)
         {
             return Err(XbergError::validation(format!(
-                "{location}: span {}..{} cuts a word under {}; check findings_offset_encoding",
+                "{location}: span {}..{} cuts a word under {}; check offset_encoding",
                 finding.start.unwrap_or_default(),
                 finding.end.unwrap_or_default(),
-                encoding_name(config.findings_offset_encoding)
+                encoding_name(offset_encoding)
             )));
         }
         let category = PiiCategory::Custom(finding.label.trim().to_string());
         if seen.insert((category.clone(), literal)) {
-            out.push((category, regex));
+            output.push((category, regex));
         }
     }
-    Ok(out)
+    Ok(output)
 }
 
-/// Load `findings_path`, then enforce the count limit over inline and loaded
-/// findings together and validate what was loaded.
-fn load_bounded_findings(config: &RedactionConfig, limits: &SecurityLimits) -> Result<Vec<ExternalRedactionFinding>> {
-    let loaded = match &config.findings_path {
-        Some(path) => load_findings(path, limits)?,
-        None => Vec::new(),
-    };
-    let inline_count = config.findings.len();
-    let total = inline_count + loaded.len();
-    if total > limits.max_redaction_findings {
-        return Err(XbergError::validation(format!(
-            "RedactionConfig: {total} findings exceed SecurityLimits.max_redaction_findings ({})",
-            limits.max_redaction_findings
-        )));
-    }
-    for (index, finding) in loaded.iter().enumerate() {
-        finding.validate(&location(inline_count + index, inline_count))?;
-    }
-    Ok(loaded)
-}
-
-/// The trimmed literal a finding redacts, and for a span-derived one the byte
-/// offset in `content` where it starts.
 fn resolve_literal<'a>(
     content: &'a str,
     finding: &'a ExternalRedactionFinding,
     byte_offsets: &HashMap<usize, usize>,
-    config: &RedactionConfig,
+    offset_encoding: RedactionOffsetEncoding,
     location: &str,
 ) -> Result<(&'a str, Option<usize>)> {
     let (literal, anchor) = match (&finding.text, finding.start, finding.end) {
@@ -133,7 +229,7 @@ fn resolve_literal<'a>(
             else {
                 return Err(XbergError::validation(format!(
                     "{location}: span {start}..{end} does not fall on {} boundaries within content",
-                    encoding_name(config.findings_offset_encoding)
+                    encoding_name(offset_encoding)
                 )));
             };
             let span = &content[byte_start..byte_end];
@@ -152,14 +248,6 @@ fn resolve_literal<'a>(
     Ok((literal, anchor))
 }
 
-fn location(index: usize, inline_count: usize) -> String {
-    if index < inline_count {
-        format!("RedactionConfig.findings[{index}]")
-    } else {
-        format!("RedactionConfig.findings_path entry {}", index - inline_count)
-    }
-}
-
 fn encoding_name(encoding: RedactionOffsetEncoding) -> &'static str {
     match encoding {
         RedactionOffsetEncoding::Utf8Bytes => "utf8_bytes",
@@ -168,8 +256,6 @@ fn encoding_name(encoding: RedactionOffsetEncoding) -> &'static str {
     }
 }
 
-/// Map each wanted offset, counted in `encoding` units, to a byte offset in
-/// `content`. Offsets past the end or inside a character are left out.
 fn byte_offsets(content: &str, encoding: RedactionOffsetEncoding, wanted: &mut Vec<usize>) -> HashMap<usize, usize> {
     wanted.sort_unstable();
     wanted.dedup();
@@ -202,32 +288,46 @@ fn byte_offsets(content: &str, encoding: RedactionOffsetEncoding, wanted: &mut V
     map
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn load_findings(path: &std::path::Path, limits: &SecurityLimits) -> Result<Vec<ExternalRedactionFinding>> {
-    use std::io::Read;
+#[cfg(all(test, feature = "tokio-runtime"))]
+mod tests {
+    use super::*;
 
-    let unreadable = |err: std::io::Error| {
-        XbergError::validation(format!("RedactionConfig.findings_path {}: {err}", path.display()))
-    };
-    let mut text = String::new();
-    std::fs::File::open(path)
-        .map_err(unreadable)?
-        .take(limits.max_content_size as u64 + 1)
-        .read_to_string(&mut text)
-        .map_err(unreadable)?;
-    if text.len() > limits.max_content_size {
-        return Err(XbergError::validation(format!(
-            "RedactionConfig.findings_path {} exceeds SecurityLimits.max_content_size ({} bytes)",
-            path.display(),
-            limits.max_content_size
-        )));
+    fn request(label: &str) -> ExternalRedactionRequest {
+        ExternalRedactionRequest::new(
+            vec![ExternalRedactionFinding {
+                label: label.to_string(),
+                text: Some(label.to_string()),
+                ..Default::default()
+            }],
+            RedactionOffsetEncoding::UnicodeCodePoints,
+            1,
+            false,
+        )
     }
-    parse_external_findings(&text)
-}
 
-#[cfg(target_arch = "wasm32")]
-fn load_findings(_path: &std::path::Path, _limits: &SecurityLimits) -> Result<Vec<ExternalRedactionFinding>> {
-    Err(XbergError::validation(
-        "RedactionConfig.findings_path is not supported on wasm32; pass findings inline".to_string(),
-    ))
+    #[tokio::test]
+    async fn nested_scopes_shadow_then_restore_the_outer_request() {
+        let outer = request("outer");
+        scope_external_redaction(outer, async {
+            assert_eq!(current_external_redaction().unwrap().findings[0].label, "outer");
+            scope_external_redaction(request("inner"), async {
+                assert_eq!(current_external_redaction().unwrap().findings[0].label, "inner");
+            })
+            .await;
+            assert_eq!(current_external_redaction().unwrap().findings[0].label, "outer");
+        })
+        .await;
+        assert!(current_external_redaction().is_none());
+    }
+
+    #[tokio::test]
+    async fn spawned_tasks_do_not_inherit_the_scope() {
+        scope_external_redaction(request("outer"), async {
+            let inherited = tokio::spawn(async { current_external_redaction().is_some() })
+                .await
+                .expect("spawned task");
+            assert!(!inherited);
+        })
+        .await;
+    }
 }
