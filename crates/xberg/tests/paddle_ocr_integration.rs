@@ -605,7 +605,7 @@ async fn test_paddle_ocr_table_text_not_duplicated_in_content() {
         ocr: Some(OcrConfig {
             backend: "paddle-ocr".to_string(),
             language: vec!["en".to_string()],
-            paddle_ocr_config: Some(serde_json::json!({"enable_table_detection": true})),
+            paddle_ocr_config: Some(PaddleOcrConfig::new("en").with_table_detection(true)),
             ..Default::default()
         }),
         use_cache: false,
@@ -641,7 +641,7 @@ async fn test_paddle_ocr_full_page_table_not_duplicated_in_pdf_content() {
             ocr: Some(OcrConfig {
                 backend: "paddle-ocr".to_string(),
                 language: vec!["en".to_string()],
-                paddle_ocr_config: Some(serde_json::json!({"enable_table_detection": true})),
+                paddle_ocr_config: Some(PaddleOcrConfig::new("en").with_table_detection(true)),
                 ..Default::default()
             }),
             force_ocr: true,
@@ -721,7 +721,7 @@ async fn test_mobile_tier_ocr_quality() {
     let ocr_config = OcrConfig {
         backend: "paddle-ocr".to_string(),
         language: vec!["en".to_string()],
-        paddle_ocr_config: Some(serde_json::json!({"model_tier": "mobile"})),
+        paddle_ocr_config: Some(PaddleOcrConfig::new("en").with_model_tier("mobile")),
         ..Default::default()
     };
 
@@ -818,7 +818,7 @@ async fn test_mobile_tier_auto_rotate() {
             backend: "paddle-ocr".to_string(),
             language: vec!["en".to_string()],
             auto_rotate: true,
-            paddle_ocr_config: Some(serde_json::json!({"model_tier": "mobile"})),
+            paddle_ocr_config: Some(PaddleOcrConfig::new("en").with_model_tier("mobile")),
             ..Default::default()
         };
 
@@ -880,7 +880,7 @@ async fn test_mobile_tier_model_cache() {
     let ocr_config = OcrConfig {
         backend: "paddle-ocr".to_string(),
         language: vec!["en".to_string()],
-        paddle_ocr_config: Some(serde_json::json!({"model_tier": "mobile"})),
+        paddle_ocr_config: Some(PaddleOcrConfig::new("en").with_model_tier("mobile")),
         ..Default::default()
     };
 
@@ -921,7 +921,7 @@ async fn test_tier_model_differentiation() {
         let ocr_config = OcrConfig {
             backend: "paddle-ocr".to_string(),
             language: vec!["en".to_string()],
-            paddle_ocr_config: Some(serde_json::json!({"model_tier": tier})),
+            paddle_ocr_config: Some(PaddleOcrConfig::new("en").with_model_tier(tier)),
             ..Default::default()
         };
 

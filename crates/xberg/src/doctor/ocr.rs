@@ -541,7 +541,9 @@ mod tests {
                         priority: 100,
                         language: Some(vec!["deu".to_string()]),
                         tesseract_config: Some(Default::default()),
-                        paddle_ocr_config: Some(serde_json::json!({"model_tier": "server"})),
+                        paddle_ocr_config: Some(
+                            crate::paddle_ocr::PaddleOcrConfig::new("en").with_model_tier("server"),
+                        ),
                         vlm_config: Some(crate::core::config::LlmConfig {
                             model: "test/model".to_string(),
                             ..Default::default()
@@ -562,8 +564,11 @@ mod tests {
         assert_eq!(captured[0].language, ["deu"]);
         assert!(captured[0].tesseract_config.is_some());
         assert_eq!(
-            captured[0].paddle_ocr_config,
-            Some(serde_json::json!({"model_tier": "server"}))
+            captured[0]
+                .paddle_ocr_config
+                .as_ref()
+                .map(|paddle| paddle.model_tier.as_str()),
+            Some("server")
         );
         assert_eq!(captured[0].vlm_config.as_ref().unwrap().model, "test/model");
         assert_eq!(

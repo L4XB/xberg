@@ -179,13 +179,13 @@ fn paddle_v6_presets_pin_model_tier_and_layout() {
         assert_eq!(ocr.backend, "paddleocr", "unexpected backend for {}", pipeline.name());
         assert!(!ocr.auto_rotate, "canonical Paddle preset must use the public default");
         assert_eq!(
-            paddle["model_version"],
+            paddle.model_version,
             PP_OCR_V6,
             "unexpected version for {}",
             pipeline.name()
         );
         assert_eq!(
-            paddle["model_tier"],
+            paddle.model_tier,
             expected_tier,
             "unexpected tier for {}",
             pipeline.name()
@@ -237,12 +237,12 @@ fn paddle_quality_sweep_presets_pin_every_swept_dimension() {
         assert!(config.force_ocr);
         assert!(config.layout.is_some());
         assert_eq!(ocr.backend, "paddleocr");
-        assert_eq!(paddle["model_version"], PP_OCR_V6);
-        assert_eq!(paddle["model_tier"], "small");
-        assert_eq!(paddle["det_limit_side_len"], expected.det_limit_side_len);
-        assert_eq!(paddle["det_db_thresh"], expected.det_db_thresh);
-        assert_eq!(paddle["det_db_box_thresh"], expected.det_db_box_thresh);
-        assert_eq!(paddle["drop_score"], expected.drop_score);
+        assert_eq!(paddle.model_version, PP_OCR_V6);
+        assert_eq!(paddle.model_tier, "small");
+        assert_eq!(paddle.det_limit_side_len, expected.det_limit_side_len);
+        assert_eq!(paddle.det_db_thresh, expected.det_db_thresh);
+        assert_eq!(paddle.det_db_box_thresh, expected.det_db_box_thresh);
+        assert_eq!(paddle.drop_score, expected.drop_score);
     }
 }
 
@@ -366,7 +366,7 @@ fn legacy_paddle_server_presets_pin_v5_server_models() {
             .expect("legacy server preset must pin model identity");
 
         assert!(!ocr.auto_rotate, "canonical Paddle preset must use the public default");
-        assert_eq!(paddle["model_version"], PP_OCR_V5);
-        assert_eq!(paddle["model_tier"], "server");
+        assert_eq!(paddle.model_version, PP_OCR_V5);
+        assert_eq!(paddle.model_tier, "server");
     }
 }

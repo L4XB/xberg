@@ -921,6 +921,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  PaddleOcrConfig dco_decode_box_autoadd_paddle_ocr_config(dynamic raw);
+
+  @protected
   PaddleOcrVlTaskKind dco_decode_box_autoadd_paddle_ocr_vl_task_kind(
     dynamic raw,
   );
@@ -2276,6 +2279,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PaddleInferenceBackend? dco_decode_opt_box_autoadd_paddle_inference_backend(
     dynamic raw,
   );
+
+  @protected
+  PaddleOcrConfig? dco_decode_opt_box_autoadd_paddle_ocr_config(dynamic raw);
 
   @protected
   PaddleOcrVlTaskKind? dco_decode_opt_box_autoadd_paddle_ocr_vl_task_kind(
@@ -3708,6 +3714,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PaddleInferenceBackend sse_decode_box_autoadd_paddle_inference_backend(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PaddleOcrConfig sse_decode_box_autoadd_paddle_ocr_config(
     SseDeserializer deserializer,
   );
 
@@ -5415,6 +5426,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PaddleInferenceBackend? sse_decode_opt_box_autoadd_paddle_inference_backend(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PaddleOcrConfig? sse_decode_opt_box_autoadd_paddle_ocr_config(
     SseDeserializer deserializer,
   );
 
@@ -7331,6 +7347,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_paddle_inference_backend(
     PaddleInferenceBackend self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_paddle_ocr_config(
+    PaddleOcrConfig self,
     SseSerializer serializer,
   );
 
@@ -9515,6 +9537,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_paddle_inference_backend(
     PaddleInferenceBackend? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_paddle_ocr_config(
+    PaddleOcrConfig? self,
     SseSerializer serializer,
   );
 

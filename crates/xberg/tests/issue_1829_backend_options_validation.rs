@@ -1,10 +1,11 @@
 //! Regression test for https://github.com/xberg-io/xberg/issues/1829
 //!
-//! A candle backend's `backend_options` and a `paddle_ocr_config` override are parsed by the
-//! backend on each page. The automatic OCR route keeps native text when a page fails, so an
-//! invalid value there used to surface only as a warning. Configuration validation now runs the
-//! same check before any page, so these cases extract a plain-text document: it needs no OCR,
-//! and only the up-front check can reject it. ~keep
+//! A candle backend's `backend_options` are parsed by the backend on each page. The automatic OCR
+//! route keeps native text when a page fails, so an invalid value there used to surface only as a
+//! warning. Configuration validation now runs the same check before any page, so these cases
+//! extract a plain-text document: it needs no OCR, and only the up-front check can reject it.
+//! `paddle_ocr_config` is a typed field, so an invalid value is rejected when the config file
+//! loads, before an extraction can start. ~keep
 //!
 //! The `cfg` below looks narrow but `--features full` satisfies all of it: `full` pulls in
 //! `formats` (so `pdf`), `ocr`, `candle-vlm-ocr` (so both `candle-trocr` and
@@ -140,29 +141,49 @@ async fn should_fail_before_any_page_when_deepseek_ocr_backend_options_are_inval
     expect_validation_error(result, "candle-deepseek-ocr backend_options.version");
 }
 
-#[tokio::test]
-async fn should_fail_before_any_page_when_paddle_ocr_config_is_invalid() {
-    let result = extract_plain_text(OcrConfig {
-        paddle_ocr_config: Some(serde_json::json!({"det_db_thresh": "not a number"})),
-        ..Default::default()
-    })
-    .await;
-
-    expect_validation_error(result, "paddle_ocr_config");
+fn load_config_file(file_name: &str, contents: &str) -> xberg::Result<ExtractionConfig> {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(file_name);
+    std::fs::write(&path, contents).expect("write config file");
+    ExtractionConfig::from_file(&path)
 }
 
-#[tokio::test]
-async fn should_fail_before_any_page_when_a_pipeline_stage_has_an_invalid_paddle_ocr_config() {
-    let result = extract_plain_text(OcrConfig {
-        pipeline: Some(pipeline_with_stage(OcrPipelineStage {
-            paddle_ocr_config: Some(serde_json::json!({"use_angle_cls": "yes"})),
-            ..stage("paddle-ocr")
-        })),
-        ..Default::default()
-    })
-    .await;
+fn expect_config_error(result: xberg::Result<ExtractionConfig>, needle: &str) {
+    match result {
+        Err(XbergError::Validation { message, .. }) => assert!(
+            message.contains(needle),
+            "the config error must name the rejected setting ({needle}): {message}"
+        ),
+        Err(other) => panic!("expected a validation error naming {needle}, got {other:?}"),
+        Ok(_) => panic!("an invalid {needle} must fail when the config loads"),
+    }
+}
 
-    expect_validation_error(result, "paddle_ocr_config");
+#[test]
+fn should_fail_config_loading_naming_the_key_when_paddle_ocr_config_is_invalid() {
+    let result = load_config_file(
+        "xberg.toml",
+        "[ocr.paddle_ocr_config]\ndet_db_thresh = \"not a number\"\n",
+    );
+
+    expect_config_error(result, "det_db_thresh");
+}
+
+#[test]
+fn should_fail_config_loading_naming_the_key_when_a_pipeline_stage_has_an_invalid_paddle_ocr_config() {
+    let result = load_config_file(
+        "xberg.toml",
+        "[[ocr.pipeline.stages]]\nbackend = \"paddle-ocr\"\n\n[ocr.pipeline.stages.paddle_ocr_config]\nuse_angle_cls = \"yes\"\n",
+    );
+
+    expect_config_error(result, "use_angle_cls");
+}
+
+#[test]
+fn should_fail_config_loading_naming_the_key_when_paddle_ocr_config_has_an_unknown_key() {
+    let result = load_config_file("xberg.json", r#"{"ocr": {"paddle_ocr_config": {"useAngleCls": true}}}"#);
+
+    expect_config_error(result, "useAngleCls");
 }
 
 #[tokio::test]
@@ -170,7 +191,11 @@ async fn should_extract_when_backend_options_and_paddle_ocr_config_are_valid() {
     let result = extract_plain_text(OcrConfig {
         backend: "candle-trocr".to_string(),
         backend_options: Some(serde_json::json!({"variant": "large-printed", "cache_dir": "/tmp/models"})),
-        paddle_ocr_config: Some(serde_json::json!({"det_db_thresh": 0.4, "use_angle_cls": false})),
+        paddle_ocr_config: Some(xberg::PaddleOcrConfig {
+            det_db_thresh: 0.4,
+            use_angle_cls: false,
+            ..Default::default()
+        }),
         ..Default::default()
     })
     .await

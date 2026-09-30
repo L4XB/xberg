@@ -35,8 +35,8 @@ const DEFAULT_DETECTION_LIMIT_SIDE_LEN: u32 = 1024;
 /// let config = PaddleOcrConfig::new("en")
 ///     .with_table_detection(true);
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct PaddleOcrConfig {
     /// Language code (e.g., "en", "ch", "jpn", "kor", "deu", "fra")
     pub language: String,
@@ -210,14 +210,14 @@ impl PaddleOcrConfig {
             return path.clone();
         }
 
-        // `hf_hub` (and model downloading in general) is unavailable on wasm32; PaddleOcrConfig
-        // itself stays available there under `paddle-ocr-types` (config/type definitions only,
-        // no ORT), so fall back to the shared cache-dir resolver instead of the excluded crate. ~keep
-        #[cfg(not(target_arch = "wasm32"))]
+        // `PaddleOcrConfig` compiles in every build because `OcrConfig` holds it, but `hf_hub`
+        // is linked only with the PaddleOCR engine and never on wasm32, so builds without the
+        // engine fall back to the shared cache-dir resolver. ~keep
+        #[cfg(all(paddle_ocr, not(target_arch = "wasm32")))]
         {
             hf_hub::resolve_cache_dir()
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(not(all(paddle_ocr, not(target_arch = "wasm32"))))]
         {
             crate::cache_dir::resolve_cache_dir("paddle-ocr")
         }
@@ -560,12 +560,34 @@ mod tests {
     }
 
     #[test]
+    fn test_deserialize_rejects_camel_case_key() {
+        let err = serde_json::from_value::<PaddleOcrConfig>(serde_json::json!({"enableTableDetection": true}))
+            .expect_err("a camelCase key must not be dropped silently");
+        assert!(err.to_string().contains("enableTableDetection"), "{err}");
+    }
+
+    #[test]
+    fn test_deserialize_snake_case_keys() {
+        let config: PaddleOcrConfig = serde_json::from_value(serde_json::json!({
+            "use_angle_cls": true,
+            "enable_table_detection": true,
+            "model_tier": "server",
+        }))
+        .unwrap();
+        assert!(config.use_angle_cls);
+        assert!(config.enable_table_detection);
+        assert_eq!(config.model_tier, "server");
+        assert_eq!(config.language, "en");
+    }
+
+    #[test]
     fn test_resolve_cache_dir_explicit() {
         let cache_path = PathBuf::from("/tmp/explicit");
         let config = PaddleOcrConfig::new("en").with_cache_dir(cache_path.clone());
         assert_eq!(config.resolve_cache_dir(), cache_path);
     }
 
+    #[cfg(all(paddle_ocr, not(target_arch = "wasm32")))]
     #[test]
     fn test_resolve_cache_dir_default() {
         let config = PaddleOcrConfig::new("en");

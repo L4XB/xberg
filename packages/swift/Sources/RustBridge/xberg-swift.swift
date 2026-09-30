@@ -1931,6 +1931,9 @@ public func __alef_phantom_vec_markdown_link() -> RustVec<MarkdownLink> {
 public func __alef_phantom_vec_metadata() -> RustVec<Metadata> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_metadata())
 }
+public func __alef_phantom_vec_model_paths() -> RustVec<ModelPaths> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_model_paths())
+}
 public func __alef_phantom_vec_ner_config() -> RustVec<NerConfig> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_ner_config())
 }
@@ -1975,6 +1978,9 @@ public func __alef_phantom_vec_ocr_table() -> RustVec<OcrTable> {
 }
 public func __alef_phantom_vec_ocr_table_bounding_box() -> RustVec<OcrTableBoundingBox> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_ocr_table_bounding_box())
+}
+public func __alef_phantom_vec_paddle_ocr_config() -> RustVec<PaddleOcrConfig> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_paddle_ocr_config())
 }
 public func __alef_phantom_vec_page_boundary() -> RustVec<PageBoundary> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_page_boundary())
@@ -2306,6 +2312,12 @@ public func __alef_phantom_vec_ocr_strategy() -> RustVec<OcrStrategy> {
 public func __alef_phantom_vec_output_format() -> RustVec<OutputFormat> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_output_format())
 }
+public func __alef_phantom_vec_paddle_inference_backend() -> RustVec<PaddleInferenceBackend> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_paddle_inference_backend())
+}
+public func __alef_phantom_vec_paddle_language() -> RustVec<PaddleLanguage> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_paddle_language())
+}
 public func __alef_phantom_vec_page_orientation_handling() -> RustVec<PageOrientationHandling> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_page_orientation_handling())
 }
@@ -2498,9 +2510,6 @@ public func __alef_phantom_vec_layout_detection_config() -> RustVec<LayoutDetect
 public func __alef_phantom_vec_meta_schema() -> RustVec<MetaSchema> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_meta_schema())
 }
-public func __alef_phantom_vec_model_paths() -> RustVec<ModelPaths> {
-    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_model_paths())
-}
 public func __alef_phantom_vec_multi_vector_embedding() -> RustVec<MultiVectorEmbedding> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_multi_vector_embedding())
 }
@@ -2515,9 +2524,6 @@ public func __alef_phantom_vec_ngram_range() -> RustVec<NgramRange> {
 }
 public func __alef_phantom_vec_orientation_result() -> RustVec<OrientationResult> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_orientation_result())
-}
-public func __alef_phantom_vec_paddle_ocr_config() -> RustVec<PaddleOcrConfig> {
-    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_paddle_ocr_config())
 }
 public func __alef_phantom_vec_paddle_ocr_vl_backend_options() -> RustVec<PaddleOcrVlBackendOptions> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_paddle_ocr_vl_backend_options())
@@ -2647,12 +2653,6 @@ public func __alef_phantom_vec_no_chunking_reason() -> RustVec<NoChunkingReason>
 }
 public func __alef_phantom_vec_psm_mode() -> RustVec<PSMMode> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_psm_mode())
-}
-public func __alef_phantom_vec_paddle_inference_backend() -> RustVec<PaddleInferenceBackend> {
-    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_paddle_inference_backend())
-}
-public func __alef_phantom_vec_paddle_language() -> RustVec<PaddleLanguage> {
-    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_paddle_language())
 }
 public func __alef_phantom_vec_paddle_ocr_vl_task_kind() -> RustVec<PaddleOcrVlTaskKind> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_paddle_ocr_vl_task_kind())
@@ -17820,8 +17820,8 @@ extension OcrConfigRef {
         { let val = __swift_bridge__$OcrConfig$output_format(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
-    public func paddleOcrConfig() -> Optional<RustString> {
-        { let val = __swift_bridge__$OcrConfig$paddle_ocr_config(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    public func paddleOcrConfig() -> Optional<PaddleOcrConfig> {
+        { let val = __swift_bridge__$OcrConfig$paddle_ocr_config(ptr); if val != nil { return PaddleOcrConfig(ptr: val!) } else { return nil } }()
     }
 
     public func backendOptions() -> Optional<RustString> {
@@ -18458,8 +18458,8 @@ extension OcrPipelineStageRef {
         { let val = __swift_bridge__$OcrPipelineStage$tesseract_config(ptr); if val != nil { return TesseractConfig(ptr: val!) } else { return nil } }()
     }
 
-    public func paddleOcrConfig() -> Optional<RustString> {
-        { let val = __swift_bridge__$OcrPipelineStage$paddle_ocr_config(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    public func paddleOcrConfig() -> Optional<PaddleOcrConfig> {
+        { let val = __swift_bridge__$OcrPipelineStage$paddle_ocr_config(ptr); if val != nil { return PaddleOcrConfig(ptr: val!) } else { return nil } }()
     }
 
     public func vlmConfig() -> Optional<LlmConfig> {

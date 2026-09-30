@@ -492,8 +492,12 @@ pub struct OcrPipelineStage {
     pub tesseract_config: Option<crate::types::TesseractConfig>,
 
     /// PaddleOCR-specific config for this stage.
+    ///
+    /// Unset fields keep their defaults. In a config file, a JSON config, or a REST or MCP request
+    /// body, an unknown key is a configuration error. A typed object built in a binding has only
+    /// the fields it declares, so it ignores any other property, as every other typed config does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub paddle_ocr_config: Option<serde_json::Value>,
+    pub paddle_ocr_config: Option<crate::paddle_ocr::PaddleOcrConfig>,
 
     /// VLM config override for this pipeline stage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -843,11 +847,13 @@ pub struct OcrConfig {
     #[serde(default)]
     pub output_format: Option<OutputFormat>,
 
-    /// PaddleOCR-specific configuration (optional, JSON passthrough).
+    /// PaddleOCR-specific configuration (optional).
     ///
-    /// Deserialized into a `PaddleOcrConfig`, so any of its fields can be
-    /// overridden here — most notably `model_version` (`"pp-ocrv6"` default / `"pp-ocrv5"`) and
-    /// `model_tier`. In TOML:
+    /// Any `PaddleOcrConfig` field can be set here; unset fields keep their defaults. In a config
+    /// file, a JSON config, or a REST or MCP request body, an unknown key is a configuration error.
+    /// A typed object built in a binding has only the fields it declares, so it ignores any other
+    /// property, as every other typed config does. The most common overrides are `model_version`
+    /// (`"pp-ocrv6"` default / `"pp-ocrv5"`) and `model_tier`. In TOML:
     ///
     /// ```toml
     /// [ocr.paddle_ocr_config]
@@ -858,7 +864,7 @@ pub struct OcrConfig {
     /// The `XBERG_OCR_MODEL_VERSION` / `XBERG_OCR_MODEL_TIER` environment variables set the same two
     /// keys for env-configured servers (issue #1279).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub paddle_ocr_config: Option<serde_json::Value>,
+    pub paddle_ocr_config: Option<crate::paddle_ocr::PaddleOcrConfig>,
 
     /// Arbitrary per-call options passed through to the backend unchanged.
     ///
@@ -1084,7 +1090,7 @@ impl OcrConfig {
     /// Also validates pipeline stage backends when a pipeline is configured.
     ///
     /// Also validates, for the backend and each pipeline stage, the options only that backend
-    /// parses: a compiled candle backend's `backend_options` and any `paddle_ocr_config`.
+    /// parses: a compiled candle backend's `backend_options`.
     ///
     /// Also validates every non-blank entry of `language` (and, per pipeline stage, its
     /// `language` override) as an ISO 639 code, and the `vlm_fallback` quality threshold as a
@@ -1113,11 +1119,7 @@ impl OcrConfig {
         }
         self.validate_quality_thresholds()?;
         validate_tesseract_tuning(self.tesseract_config.as_ref())?;
-        validate_backend_owned_options(
-            &self.backend,
-            self.backend_options.as_ref(),
-            self.paddle_ocr_config.as_ref(),
-        )?;
+        validate_backend_owned_options(&self.backend, self.backend_options.as_ref())?;
         if let Some(ref pipeline) = self.pipeline {
             for stage in &pipeline.stages {
                 validate_ocr_backend(&stage.backend)?;
@@ -1126,11 +1128,7 @@ impl OcrConfig {
                     validate_languages(languages)?;
                 }
                 validate_tesseract_tuning(stage.tesseract_config.as_ref())?;
-                validate_backend_owned_options(
-                    &stage.backend,
-                    stage.backend_options.as_ref(),
-                    stage.paddle_ocr_config.as_ref(),
-                )?;
+                validate_backend_owned_options(&stage.backend, stage.backend_options.as_ref())?;
             }
         } else if self.vlm_fallback != VlmFallbackPolicy::Disabled && self.vlm_config.is_none() {
             return Err(XbergError::validation(
@@ -1405,22 +1403,18 @@ fn validate_tesseract_tuning(tesseract_config: Option<&crate::types::TesseractCo
     Ok(())
 }
 
-/// Validate the settings that only a backend parses: a candle backend's `backend_options` and a
-/// `paddle_ocr_config` override.
+/// Validate the settings that only a backend parses: a candle backend's `backend_options`.
 ///
 /// This runs the same check the backend runs on each page, so an invalid value fails the
 /// extraction before any page runs. The automatic OCR route keeps native text when a page
 /// fails, so a value first rejected on a page would surface only as a warning. ~keep
 #[cfg_attr(
-    not(all(
-        paddle_ocr,
-        any(
-            feature = "candle-trocr",
-            feature = "candle-paddleocr-vl",
-            all(
-                not(target_arch = "wasm32"),
-                any(feature = "candle-glm-ocr", feature = "candle-deepseek-ocr")
-            )
+    not(any(
+        feature = "candle-trocr",
+        feature = "candle-paddleocr-vl",
+        all(
+            not(target_arch = "wasm32"),
+            any(feature = "candle-glm-ocr", feature = "candle-deepseek-ocr")
         )
     )),
     allow(unused_variables)
@@ -1428,7 +1422,6 @@ fn validate_tesseract_tuning(tesseract_config: Option<&crate::types::TesseractCo
 fn validate_backend_owned_options(
     backend: &str,
     backend_options: Option<&serde_json::Value>,
-    paddle_ocr_config: Option<&serde_json::Value>,
 ) -> Result<(), XbergError> {
     #[cfg(any(
         feature = "candle-trocr",
@@ -1439,10 +1432,6 @@ fn validate_backend_owned_options(
         )
     ))]
     crate::candle_ocr::validate_backend_options(backend, backend_options)?;
-    #[cfg(paddle_ocr)]
-    if let Some(paddle_ocr_config) = paddle_ocr_config {
-        crate::paddle_ocr::parse_paddle_ocr_config(paddle_ocr_config)?;
-    }
     Ok(())
 }
 
@@ -1707,6 +1696,59 @@ mod tests {
             ..Default::default()
         };
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_paddle_ocr_config_deserializes_to_typed_struct() {
+        let config: OcrConfig = serde_json::from_value(serde_json::json!({
+            "backend": "paddle-ocr",
+            "paddle_ocr_config": {"use_angle_cls": true, "enable_table_detection": true},
+        }))
+        .unwrap();
+        let paddle = config.paddle_ocr_config.expect("paddle_ocr_config must deserialize");
+        assert!(paddle.use_angle_cls);
+        assert!(paddle.enable_table_detection);
+        let defaults = crate::paddle_ocr::PaddleOcrConfig::default();
+        assert_eq!(paddle.model_tier, defaults.model_tier);
+        assert_eq!(paddle.model_version, defaults.model_version);
+        assert_eq!(paddle.det_db_box_thresh, defaults.det_db_box_thresh);
+    }
+
+    #[test]
+    fn test_paddle_ocr_config_unknown_key_fails_deserialization() {
+        let err = serde_json::from_value::<OcrConfig>(serde_json::json!({
+            "paddle_ocr_config": {"useAngleCls": true},
+        }))
+        .expect_err("an unknown paddle_ocr_config key must fail deserialization");
+        assert!(err.to_string().contains("useAngleCls"), "{err}");
+    }
+
+    #[test]
+    fn test_pipeline_stage_paddle_ocr_config_unknown_key_fails_deserialization() {
+        let err = serde_json::from_value::<OcrPipelineStage>(serde_json::json!({
+            "backend": "paddleocr",
+            "paddle_ocr_config": {"bogus": 1},
+        }))
+        .expect_err("an unknown pipeline-stage paddle_ocr_config key must fail deserialization");
+        assert!(err.to_string().contains("bogus"), "{err}");
+    }
+
+    #[test]
+    fn test_paddle_ocr_config_deserializes_from_toml() {
+        let config: OcrConfig = toml::from_str(
+            r#"
+backend = "paddle-ocr"
+
+[paddle_ocr_config]
+model_version = "pp-ocrv5"
+model_tier = "server"
+"#,
+        )
+        .unwrap();
+        let paddle = config.paddle_ocr_config.expect("paddle_ocr_config must deserialize");
+        assert_eq!(paddle.model_version, "pp-ocrv5");
+        assert_eq!(paddle.model_tier, "server");
+        assert!(!paddle.enable_table_detection);
     }
 
     #[test]
@@ -2182,7 +2224,7 @@ mod tests {
                     priority: 50,
                     language: None,
                     tesseract_config: None,
-                    paddle_ocr_config: Some(serde_json::json!({"use_gpu": false})),
+                    paddle_ocr_config: Some(crate::paddle_ocr::PaddleOcrConfig::new("en").with_model_tier("server")),
                     vlm_config: None,
                     backend_options: None,
                 },
@@ -2196,7 +2238,10 @@ mod tests {
         assert_eq!(deserialized.stages[0].priority, 100);
         assert_eq!(deserialized.stages[1].backend, "paddleocr");
         assert_eq!(deserialized.stages[1].priority, 50);
-        assert!(deserialized.stages[1].paddle_ocr_config.is_some());
+        assert_eq!(
+            deserialized.stages[1].paddle_ocr_config, pipeline.stages[1].paddle_ocr_config,
+            "a typed paddle_ocr_config must survive a JSON round trip"
+        );
     }
 
     /// `pipeline_selection` derives the best-effort policy from the `OcrConfig` rather

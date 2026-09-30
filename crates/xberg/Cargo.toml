@@ -202,9 +202,6 @@ heic = ["dep:xberg-libheif", "dep:image", "dep:nom-exif", "image-encode"]
 # WordPerfect (.wpd) extraction via the vendored libwpd/librevenge shim in
 # xberg-libwpd. Native C++ dependency (vendors boost), same shape as `heic`.
 wordperfect = ["dep:xberg-libwpd"]
-# PaddleOCR type definitions only — pure-Rust config structs, no ORT dependency.
-# Exposes PaddleOcrConfig, PaddleLanguage, ModelPaths. Safe on Android/WASM.
-paddle-ocr-types = []
 # Candle-based VLM OCR backends. Pure-Rust transformer inference via candle —
 # no ORT, no native binaries. Compatible with `ort-bundled` / `paddle-ocr`;
 # multiple OCR backends can be registered side-by-side.
@@ -255,7 +252,6 @@ paddle-ocr = ["paddle-ocr-ort"]
 # PaddleOCR via ONNX Runtime
 # Requires 'ocr' feature for shared conversion utilities and table reconstruction
 paddle-ocr-ort = [
-    "paddle-ocr-types",
     "dep:xberg-paddle-ocr",
     "xberg-paddle-ocr/ort",
     "dep:sha2",
@@ -279,7 +275,6 @@ paddle-ocr-ort = [
 # xberg-paddle-ocr. Deliberately omits `dep:ort`. `paddle-ocr-ort` stays the native default —
 # never enable both in one build.
 paddle-ocr-tract = [
-    "paddle-ocr-types",
     "dep:xberg-paddle-ocr",
     "xberg-paddle-ocr/tract",
     "dep:sha2",
@@ -712,7 +707,6 @@ no-ort-target = [
     "late-interaction-presets",
     "layout-types",
     "auto-rotate-types",
-    "paddle-ocr-types",
     "ner",
     "presets",
     "redaction",
@@ -860,7 +854,7 @@ windows-target = [
     "stopwords",
     # ORT-dependent ML features. Each implies its corresponding *-types /
     # *-presets marker feature, so the standalone type-only entries that used
-    # to sit here (auto-rotate-types, layout-types, paddle-ocr-types,
+    # to sit here (auto-rotate-types, layout-types,
     # embedding-presets, reranker-presets, transcription-types) are now
     # redundant and have been folded into the full features below.
     "auto-rotate",
@@ -987,7 +981,7 @@ windows-target = [
 # consumer calls an ORT-backed API, on every machine that installs the
 # gem. So this variant drops the ORT-dependent leaves entirely instead,
 # keeping each leaf's pure-Rust *-types / *-presets marker feature
-# (auto-rotate-types, layout-types, paddle-ocr-types, embedding-presets,
+# (auto-rotate-types, layout-types, embedding-presets,
 # reranker-presets, sparse-embedding-presets, late-interaction-presets,
 # transcription-types) so the generated bindings that reference those
 # public types unconditionally still compile. `candle-vlm-ocr` is also
@@ -1017,7 +1011,6 @@ windows-gnu-target = [
     "stopwords",
     "auto-rotate-types",
     "layout-types",
-    "paddle-ocr-types",
     "embedding-presets",
     # static-embeddings = [embedding-presets, tokio-runtime, dep:model2vec-rs,
     # dep:tokenizers-model2vec, dep:tokenizers, dep:ndarray, dep:hf-hub, dep:reqwest,

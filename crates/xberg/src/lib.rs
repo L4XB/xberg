@@ -198,7 +198,6 @@ pub(crate) mod model_download;
 #[cfg(any(layout_detection, auto_rotate))]
 pub(crate) mod inference;
 
-#[cfg(any(paddle_ocr, feature = "paddle-ocr-types"))]
 pub mod paddle_ocr;
 
 #[cfg(all(sceptre_ocr, not(target_arch = "wasm32")))]
@@ -324,7 +323,6 @@ pub use html_to_markdown_rs::ConversionOptions;
 #[cfg(feature = "html")]
 pub use rendering::StyledHtmlRenderer;
 
-#[cfg(feature = "paddle-ocr-types")]
 pub use paddle_ocr::{ModelPaths, PaddleInferenceBackend, PaddleLanguage, PaddleOcrConfig};
 
 #[cfg(paddle_ocr)]

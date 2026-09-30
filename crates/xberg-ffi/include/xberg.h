@@ -42,7 +42,6 @@
 #define XBERG_FEATURE_OCR 1
 #define XBERG_FEATURE_OFFICE 1
 #define XBERG_FEATURE_PADDLE_OCR 1
-#define XBERG_FEATURE_PADDLE_OCR_TYPES 1
 #define XBERG_FEATURE_PDF 1
 #define XBERG_FEATURE_PRESETS 1
 #define XBERG_FEATURE_QR_CODES 1
@@ -17388,7 +17387,6 @@ char *xberg_metadata_additional(XBERGAlefHandle handle);
  */
 int32_t xberg_metadata_is_empty(XBERGAlefHandle this_);
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Create a `ModelPaths` from a JSON string. Returns null on failure.
  * # Safety
@@ -17396,9 +17394,7 @@ int32_t xberg_metadata_is_empty(XBERGAlefHandle this_);
  * Returned handle must be freed with `xberg_model_paths_free`.
  */
 XBERGAlefHandle xberg_model_paths_from_json(const char *json);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Serialize a `ModelPaths` to a JSON string. Returns null on failure.
  * # Safety
@@ -17406,18 +17402,14 @@ XBERGAlefHandle xberg_model_paths_from_json(const char *json);
  * The returned string must be freed with `xberg_free_string`.
  */
 char *xberg_model_paths_to_json(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Free a `ModelPaths` handle.
  * # Safety
  * Handle must have been returned by this library, or be zero.
  */
 void xberg_model_paths_free(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `det_model` field from a `ModelPaths`.
  * A non-null returned pointer is owned by the caller.
@@ -17426,9 +17418,7 @@ void xberg_model_paths_free(XBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *xberg_model_paths_det_model(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `cls_model` field from a `ModelPaths`.
  * A non-null returned pointer is owned by the caller.
@@ -17437,9 +17427,7 @@ char *xberg_model_paths_det_model(XBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *xberg_model_paths_cls_model(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `rec_model` field from a `ModelPaths`.
  * A non-null returned pointer is owned by the caller.
@@ -17448,9 +17436,7 @@ char *xberg_model_paths_cls_model(XBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *xberg_model_paths_rec_model(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `dict_file` field from a `ModelPaths`.
  * A non-null returned pointer is owned by the caller.
@@ -17459,7 +17445,6 @@ char *xberg_model_paths_rec_model(XBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *xberg_model_paths_dict_file(XBERGAlefHandle handle);
-#endif
 
 #if defined(XBERG_FEATURE_LATE_INTERACTION_PRESETS)
 /**
@@ -17928,12 +17913,12 @@ XBERGAlefHandle xberg_ocr_config_output_format(XBERGAlefHandle handle);
 
 /**
  * Get the `paddle_ocr_config` field from a `OcrConfig`.
- * A non-null returned pointer is owned by the caller.
- * It must be freed with `xberg_free_string`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `xberg_paddle_ocr_config_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *xberg_ocr_config_paddle_ocr_config(XBERGAlefHandle handle);
+XBERGAlefHandle xberg_ocr_config_paddle_ocr_config(XBERGAlefHandle handle);
 
 /**
  * Get the `backend_options` field from a `OcrConfig`.
@@ -18438,12 +18423,13 @@ xberg_ocr_pipeline_stage_tesseract_config(XBERGAlefHandle handle);
 
 /**
  * Get the `paddle_ocr_config` field from a `OcrPipelineStage`.
- * A non-null returned pointer is owned by the caller.
- * It must be freed with `xberg_free_string`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `xberg_paddle_ocr_config_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *xberg_ocr_pipeline_stage_paddle_ocr_config(XBERGAlefHandle handle);
+XBERGAlefHandle
+xberg_ocr_pipeline_stage_paddle_ocr_config(XBERGAlefHandle handle);
 
 /**
  * Get the `vlm_config` field from a `OcrPipelineStage`.
@@ -18940,7 +18926,6 @@ uint32_t xberg_orientation_result_degrees(XBERGAlefHandle handle);
 float xberg_orientation_result_confidence(XBERGAlefHandle handle);
 #endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Create a `PaddleOcrConfig` from a JSON string. Returns null on failure.
  * # Safety
@@ -18948,9 +18933,7 @@ float xberg_orientation_result_confidence(XBERGAlefHandle handle);
  * Returned handle must be freed with `xberg_paddle_ocr_config_free`.
  */
 XBERGAlefHandle xberg_paddle_ocr_config_from_json(const char *json);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Serialize a `PaddleOcrConfig` to a JSON string. Returns null on failure.
  * # Safety
@@ -18958,18 +18941,14 @@ XBERGAlefHandle xberg_paddle_ocr_config_from_json(const char *json);
  * The returned string must be freed with `xberg_free_string`.
  */
 char *xberg_paddle_ocr_config_to_json(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Free a `PaddleOcrConfig` handle.
  * # Safety
  * Handle must have been returned by this library, or be zero.
  */
 void xberg_paddle_ocr_config_free(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `language` field from a `PaddleOcrConfig`.
  * A non-null returned pointer is owned by the caller.
@@ -18978,9 +18957,7 @@ void xberg_paddle_ocr_config_free(XBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *xberg_paddle_ocr_config_language(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `cache_dir` field from a `PaddleOcrConfig`.
  * A non-null returned pointer is owned by the caller.
@@ -18989,90 +18966,70 @@ char *xberg_paddle_ocr_config_language(XBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *xberg_paddle_ocr_config_cache_dir(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `use_angle_cls` field from a `PaddleOcrConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 int32_t xberg_paddle_ocr_config_use_angle_cls(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `enable_table_detection` field from a `PaddleOcrConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 int32_t xberg_paddle_ocr_config_enable_table_detection(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `det_db_thresh` field from a `PaddleOcrConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 float xberg_paddle_ocr_config_det_db_thresh(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `det_db_box_thresh` field from a `PaddleOcrConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 float xberg_paddle_ocr_config_det_db_box_thresh(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `det_db_unclip_ratio` field from a `PaddleOcrConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 float xberg_paddle_ocr_config_det_db_unclip_ratio(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `det_limit_side_len` field from a `PaddleOcrConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 uint32_t xberg_paddle_ocr_config_det_limit_side_len(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `rec_batch_num` field from a `PaddleOcrConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 uint32_t xberg_paddle_ocr_config_rec_batch_num(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `padding` field from a `PaddleOcrConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 uint32_t xberg_paddle_ocr_config_padding(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `drop_score` field from a `PaddleOcrConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 float xberg_paddle_ocr_config_drop_score(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `model_tier` field from a `PaddleOcrConfig`.
  * A non-null returned pointer is owned by the caller.
@@ -19081,9 +19038,7 @@ float xberg_paddle_ocr_config_drop_score(XBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *xberg_paddle_ocr_config_model_tier(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `model_version` field from a `PaddleOcrConfig`.
  * A non-null returned pointer is owned by the caller.
@@ -19092,9 +19047,7 @@ char *xberg_paddle_ocr_config_model_tier(XBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *xberg_paddle_ocr_config_model_version(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Get the `inference_backend` field from a `PaddleOcrConfig`.
  * A non-null returned handle is owned by the caller.
@@ -19104,9 +19057,7 @@ char *xberg_paddle_ocr_config_model_version(XBERGAlefHandle handle);
  */
 XBERGAlefHandle
 xberg_paddle_ocr_config_inference_backend(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets a custom Hugging Face Hub cache root for model files.
  * \param path Path to cache directory
@@ -19122,9 +19073,7 @@ xberg_paddle_ocr_config_inference_backend(XBERGAlefHandle handle);
  */
 XBERGAlefHandle xberg_paddle_ocr_config_with_cache_dir(XBERGAlefHandle this_,
                                                        const char *path);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Enables or disables table structure detection.
  * \param enable Whether to enable table detection
@@ -19140,9 +19089,7 @@ XBERGAlefHandle xberg_paddle_ocr_config_with_cache_dir(XBERGAlefHandle this_,
 XBERGAlefHandle
 xberg_paddle_ocr_config_with_table_detection(XBERGAlefHandle this_,
                                              int32_t enable);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Enables or disables angle classification for rotated text.
  * \param enable Whether to enable angle classification
@@ -19151,9 +19098,7 @@ xberg_paddle_ocr_config_with_table_detection(XBERGAlefHandle this_,
  */
 XBERGAlefHandle xberg_paddle_ocr_config_with_angle_cls(XBERGAlefHandle this_,
                                                        int32_t enable);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets the database threshold for text detection.
  * \param threshold Detection threshold (0.0-1.0)
@@ -19163,9 +19108,7 @@ XBERGAlefHandle xberg_paddle_ocr_config_with_angle_cls(XBERGAlefHandle this_,
 XBERGAlefHandle
 xberg_paddle_ocr_config_with_det_db_thresh(XBERGAlefHandle this_,
                                            float threshold);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets the box threshold for text bounding box refinement.
  * \param threshold Box threshold (0.0-1.0)
@@ -19175,9 +19118,7 @@ xberg_paddle_ocr_config_with_det_db_thresh(XBERGAlefHandle this_,
 XBERGAlefHandle
 xberg_paddle_ocr_config_with_det_db_box_thresh(XBERGAlefHandle this_,
                                                float threshold);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets the unclip ratio for expanding text bounding boxes.
  * \param ratio Unclip ratio (typically 1.5-2.0)
@@ -19187,9 +19128,7 @@ xberg_paddle_ocr_config_with_det_db_box_thresh(XBERGAlefHandle this_,
 XBERGAlefHandle
 xberg_paddle_ocr_config_with_det_db_unclip_ratio(XBERGAlefHandle this_,
                                                  float ratio);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets the maximum side length for detection images.
  * \param length Maximum side length in pixels
@@ -19199,9 +19138,7 @@ xberg_paddle_ocr_config_with_det_db_unclip_ratio(XBERGAlefHandle this_,
 XBERGAlefHandle
 xberg_paddle_ocr_config_with_det_limit_side_len(XBERGAlefHandle this_,
                                                 uint32_t length);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets the batch size for recognition inference.
  * \param batch_size Number of text regions to process simultaneously
@@ -19211,9 +19148,7 @@ xberg_paddle_ocr_config_with_det_limit_side_len(XBERGAlefHandle this_,
 XBERGAlefHandle
 xberg_paddle_ocr_config_with_rec_batch_num(XBERGAlefHandle this_,
                                            uint32_t batch_size);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets the minimum recognition confidence threshold.
  * \param score Minimum confidence (0.0-1.0), text below this is dropped
@@ -19222,9 +19157,7 @@ xberg_paddle_ocr_config_with_rec_batch_num(XBERGAlefHandle this_,
  */
 XBERGAlefHandle xberg_paddle_ocr_config_with_drop_score(XBERGAlefHandle this_,
                                                         float score);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets padding in pixels added around images before detection.
  * \param padding Padding in pixels (0-100)
@@ -19233,9 +19166,7 @@ XBERGAlefHandle xberg_paddle_ocr_config_with_drop_score(XBERGAlefHandle this_,
  */
 XBERGAlefHandle xberg_paddle_ocr_config_with_padding(XBERGAlefHandle this_,
                                                      uint32_t padding);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets the model tier controlling detection/recognition model size.
  * \param tier `"mobile"` (default, lightweight, faster) or `"server"` (high
@@ -19245,9 +19176,7 @@ XBERGAlefHandle xberg_paddle_ocr_config_with_padding(XBERGAlefHandle this_,
  */
 XBERGAlefHandle xberg_paddle_ocr_config_with_model_tier(XBERGAlefHandle this_,
                                                         const char *tier);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Sets the model generation.
  * \param version `"pp-ocrv6"` (default) or `"pp-ocrv5"`. Under `"pp-ocrv6"`,
@@ -19258,16 +19187,13 @@ XBERGAlefHandle xberg_paddle_ocr_config_with_model_tier(XBERGAlefHandle this_,
 XBERGAlefHandle
 xberg_paddle_ocr_config_with_model_version(XBERGAlefHandle this_,
                                            const char *version);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Creates a default configuration with English language support.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
  * Returned pointers must be freed with the appropriate free function.
  */
 XBERGAlefHandle xberg_paddle_ocr_config_default(void);
-#endif
 
 #if defined(XBERG_FEATURE_CANDLE_OCR)
 /**
@@ -29169,25 +29095,20 @@ char *xberg_output_format_to_json(XBERGAlefHandle handle);
  */
 char *xberg_output_format_to_string(XBERGAlefHandle handle);
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Free a `PaddleInferenceBackend` handle.
  * # Safety
  * Handle must have been returned by this library, or be zero.
  */
 void xberg_paddle_inference_backend_free(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Serialize a `PaddleInferenceBackend` to a JSON string. Returns null on
  * failure. # Safety `handle` must be a valid, non-zero handle returned by a
  * `xberg` function. The returned string must be freed with `xberg_free_string`.
  */
 char *xberg_paddle_inference_backend_to_json(XBERGAlefHandle handle);
-#endif
 
-#if defined(XBERG_FEATURE_PADDLE_OCR_TYPES)
 /**
  * Render a `PaddleInferenceBackend` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
@@ -29197,7 +29118,6 @@ char *xberg_paddle_inference_backend_to_json(XBERGAlefHandle handle);
  * The returned string must be freed with `xberg_free_string`.
  */
 char *xberg_paddle_inference_backend_to_string(XBERGAlefHandle handle);
-#endif
 
 #if defined(XBERG_FEATURE_CANDLE_OCR)
 /**

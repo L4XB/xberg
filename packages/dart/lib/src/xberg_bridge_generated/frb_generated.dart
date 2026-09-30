@@ -17902,6 +17902,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PaddleOcrConfig dco_decode_box_autoadd_paddle_ocr_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_paddle_ocr_config(raw);
+  }
+
+  @protected
   PaddleOcrVlTaskKind dco_decode_box_autoadd_paddle_ocr_vl_task_kind(
     dynamic raw,
   ) {
@@ -21846,7 +21852,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       language: dco_decode_list_String(arr[2]),
       tesseractConfig: dco_decode_opt_box_autoadd_tesseract_config(arr[3]),
       outputFormat: dco_decode_opt_box_autoadd_output_format(arr[4]),
-      paddleOcrConfig: dco_decode_opt_String(arr[5]),
+      paddleOcrConfig: dco_decode_opt_box_autoadd_paddle_ocr_config(arr[5]),
       backendOptions: dco_decode_opt_String(arr[6]),
       elementConfig: dco_decode_opt_box_autoadd_ocr_element_config(arr[7]),
       qualityThresholds: dco_decode_opt_box_autoadd_ocr_quality_thresholds(
@@ -21959,7 +21965,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       priority: dco_decode_i_64(arr[1]),
       language: dco_decode_opt_list_String(arr[2]),
       tesseractConfig: dco_decode_opt_box_autoadd_tesseract_config(arr[3]),
-      paddleOcrConfig: dco_decode_opt_String(arr[4]),
+      paddleOcrConfig: dco_decode_opt_box_autoadd_paddle_ocr_config(arr[4]),
       vlmConfig: dco_decode_opt_box_autoadd_llm_config(arr[5]),
       backendOptions: dco_decode_opt_String(arr[6]),
     );
@@ -22616,6 +22622,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return raw == null
         ? null
         : dco_decode_box_autoadd_paddle_inference_backend(raw);
+  }
+
+  @protected
+  PaddleOcrConfig? dco_decode_opt_box_autoadd_paddle_ocr_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_paddle_ocr_config(raw);
   }
 
   @protected
@@ -26451,6 +26463,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_paddle_inference_backend(deserializer));
+  }
+
+  @protected
+  PaddleOcrConfig sse_decode_box_autoadd_paddle_ocr_config(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_paddle_ocr_config(deserializer));
   }
 
   @protected
@@ -31893,7 +31913,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_outputFormat = sse_decode_opt_box_autoadd_output_format(
       deserializer,
     );
-    var var_paddleOcrConfig = sse_decode_opt_String(deserializer);
+    var var_paddleOcrConfig = sse_decode_opt_box_autoadd_paddle_ocr_config(
+      deserializer,
+    );
     var var_backendOptions = sse_decode_opt_String(deserializer);
     var var_elementConfig = sse_decode_opt_box_autoadd_ocr_element_config(
       deserializer,
@@ -32046,7 +32068,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_tesseractConfig = sse_decode_opt_box_autoadd_tesseract_config(
       deserializer,
     );
-    var var_paddleOcrConfig = sse_decode_opt_String(deserializer);
+    var var_paddleOcrConfig = sse_decode_opt_box_autoadd_paddle_ocr_config(
+      deserializer,
+    );
     var var_vlmConfig = sse_decode_opt_box_autoadd_llm_config(deserializer);
     var var_backendOptions = sse_decode_opt_String(deserializer);
     return OcrPipelineStage(
@@ -33146,6 +33170,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_paddle_inference_backend(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  PaddleOcrConfig? sse_decode_opt_box_autoadd_paddle_ocr_config(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_paddle_ocr_config(deserializer));
     } else {
       return null;
     }
@@ -38118,6 +38155,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_paddle_ocr_config(
+    PaddleOcrConfig self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_paddle_ocr_config(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_paddle_ocr_vl_task_kind(
     PaddleOcrVlTaskKind self,
     SseSerializer serializer,
@@ -42438,7 +42484,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_box_autoadd_output_format(self.outputFormat, serializer);
-    sse_encode_opt_String(self.paddleOcrConfig, serializer);
+    sse_encode_opt_box_autoadd_paddle_ocr_config(
+      self.paddleOcrConfig,
+      serializer,
+    );
     sse_encode_opt_String(self.backendOptions, serializer);
     sse_encode_opt_box_autoadd_ocr_element_config(
       self.elementConfig,
@@ -42547,7 +42596,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       self.tesseractConfig,
       serializer,
     );
-    sse_encode_opt_String(self.paddleOcrConfig, serializer);
+    sse_encode_opt_box_autoadd_paddle_ocr_config(
+      self.paddleOcrConfig,
+      serializer,
+    );
     sse_encode_opt_box_autoadd_llm_config(self.vlmConfig, serializer);
     sse_encode_opt_String(self.backendOptions, serializer);
   }
@@ -43586,6 +43638,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_paddle_inference_backend(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_paddle_ocr_config(
+    PaddleOcrConfig? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_paddle_ocr_config(self, serializer);
     }
   }
 

@@ -6670,7 +6670,6 @@ fn wire__crate__create_mime_detection_policy_from_json_impl(
         },
     )
 }
-#[cfg(feature = "paddle-ocr-types")]
 fn wire__crate__create_model_paths_from_json_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -7575,7 +7574,6 @@ fn wire__crate__create_output_format_from_json_impl(
         },
     )
 }
-#[cfg(feature = "paddle-ocr-types")]
 fn wire__crate__create_paddle_inference_backend_from_json_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -7604,7 +7602,6 @@ fn wire__crate__create_paddle_inference_backend_from_json_impl(
         },
     )
 }
-#[cfg(feature = "paddle-ocr-types")]
 fn wire__crate__create_paddle_language_from_json_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -7633,7 +7630,6 @@ fn wire__crate__create_paddle_language_from_json_impl(
         },
     )
 }
-#[cfg(feature = "paddle-ocr-types")]
 fn wire__crate__create_paddle_ocr_config_from_json_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -13995,7 +13991,7 @@ const _: fn() = || {
         let _: Vec<String> = OcrConfig.language;
         let _: Option<crate::TesseractConfig> = OcrConfig.tesseract_config;
         let _: Option<crate::OutputFormat> = OcrConfig.output_format;
-        let _: Option<String> = OcrConfig.paddle_ocr_config;
+        let _: Option<crate::PaddleOcrConfig> = OcrConfig.paddle_ocr_config;
         let _: Option<String> = OcrConfig.backend_options;
         let _: Option<crate::OcrElementConfig> = OcrConfig.element_config;
         let _: Option<crate::OcrQualityThresholds> = OcrConfig.quality_thresholds;
@@ -14056,7 +14052,7 @@ const _: fn() = || {
         let _: i64 = OcrPipelineStage.priority;
         let _: Option<Vec<String>> = OcrPipelineStage.language;
         let _: Option<crate::TesseractConfig> = OcrPipelineStage.tesseract_config;
-        let _: Option<String> = OcrPipelineStage.paddle_ocr_config;
+        let _: Option<crate::PaddleOcrConfig> = OcrPipelineStage.paddle_ocr_config;
         let _: Option<crate::LlmConfig> = OcrPipelineStage.vlm_config;
         let _: Option<String> = OcrPipelineStage.backend_options;
     }
@@ -21745,7 +21741,7 @@ impl SseDecode for crate::OcrConfig {
         let mut var_language = <Vec<String>>::sse_decode(deserializer);
         let mut var_tesseractConfig = <Option<crate::TesseractConfig>>::sse_decode(deserializer);
         let mut var_outputFormat = <Option<crate::OutputFormat>>::sse_decode(deserializer);
-        let mut var_paddleOcrConfig = <Option<String>>::sse_decode(deserializer);
+        let mut var_paddleOcrConfig = <Option<crate::PaddleOcrConfig>>::sse_decode(deserializer);
         let mut var_backendOptions = <Option<String>>::sse_decode(deserializer);
         let mut var_elementConfig = <Option<crate::OcrElementConfig>>::sse_decode(deserializer);
         let mut var_qualityThresholds = <Option<crate::OcrQualityThresholds>>::sse_decode(deserializer);
@@ -21894,7 +21890,7 @@ impl SseDecode for crate::OcrPipelineStage {
         let mut var_priority = <i64>::sse_decode(deserializer);
         let mut var_language = <Option<Vec<String>>>::sse_decode(deserializer);
         let mut var_tesseractConfig = <Option<crate::TesseractConfig>>::sse_decode(deserializer);
-        let mut var_paddleOcrConfig = <Option<String>>::sse_decode(deserializer);
+        let mut var_paddleOcrConfig = <Option<crate::PaddleOcrConfig>>::sse_decode(deserializer);
         let mut var_vlmConfig = <Option<crate::LlmConfig>>::sse_decode(deserializer);
         let mut var_backendOptions = <Option<String>>::sse_decode(deserializer);
         return crate::OcrPipelineStage {
@@ -22853,6 +22849,17 @@ impl SseDecode for Option<crate::PaddleInferenceBackend> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::PaddleInferenceBackend>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::PaddleOcrConfig> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::PaddleOcrConfig>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -26263,7 +26270,6 @@ fn pde_ffi_dispatcher_primary_impl(
         222 => wire__crate__create_merge_mode_from_json_impl(port, ptr, rust_vec_len, data_len),
         223 => wire__crate__create_metadata_from_json_impl(port, ptr, rust_vec_len, data_len),
         224 => wire__crate__create_mime_detection_policy_from_json_impl(port, ptr, rust_vec_len, data_len),
-        #[cfg(feature = "paddle-ocr-types")]
         225 => wire__crate__create_model_paths_from_json_impl(port, ptr, rust_vec_len, data_len),
         #[cfg(feature = "late-interaction-presets")]
         226 => wire__crate__create_multi_vector_embedding_from_json_impl(port, ptr, rust_vec_len, data_len),
@@ -26300,11 +26306,8 @@ fn pde_ffi_dispatcher_primary_impl(
         #[cfg(feature = "auto-rotate-types")]
         253 => wire__crate__create_orientation_result_from_json_impl(port, ptr, rust_vec_len, data_len),
         254 => wire__crate__create_output_format_from_json_impl(port, ptr, rust_vec_len, data_len),
-        #[cfg(feature = "paddle-ocr-types")]
         255 => wire__crate__create_paddle_inference_backend_from_json_impl(port, ptr, rust_vec_len, data_len),
-        #[cfg(feature = "paddle-ocr-types")]
         256 => wire__crate__create_paddle_language_from_json_impl(port, ptr, rust_vec_len, data_len),
-        #[cfg(feature = "paddle-ocr-types")]
         257 => wire__crate__create_paddle_ocr_config_from_json_impl(port, ptr, rust_vec_len, data_len),
         #[cfg(feature = "candle-ocr")]
         258 => wire__crate__create_paddle_ocr_vl_backend_options_from_json_impl(port, ptr, rust_vec_len, data_len),
@@ -38949,7 +38952,7 @@ impl SseEncode for crate::OcrConfig {
         <Vec<String>>::sse_encode(self.language, serializer);
         <Option<crate::TesseractConfig>>::sse_encode(self.tesseract_config, serializer);
         <Option<crate::OutputFormat>>::sse_encode(self.output_format, serializer);
-        <Option<String>>::sse_encode(self.paddle_ocr_config, serializer);
+        <Option<crate::PaddleOcrConfig>>::sse_encode(self.paddle_ocr_config, serializer);
         <Option<String>>::sse_encode(self.backend_options, serializer);
         <Option<crate::OcrElementConfig>>::sse_encode(self.element_config, serializer);
         <Option<crate::OcrQualityThresholds>>::sse_encode(self.quality_thresholds, serializer);
@@ -39046,7 +39049,7 @@ impl SseEncode for crate::OcrPipelineStage {
         <i64>::sse_encode(self.priority, serializer);
         <Option<Vec<String>>>::sse_encode(self.language, serializer);
         <Option<crate::TesseractConfig>>::sse_encode(self.tesseract_config, serializer);
-        <Option<String>>::sse_encode(self.paddle_ocr_config, serializer);
+        <Option<crate::PaddleOcrConfig>>::sse_encode(self.paddle_ocr_config, serializer);
         <Option<crate::LlmConfig>>::sse_encode(self.vlm_config, serializer);
         <Option<String>>::sse_encode(self.backend_options, serializer);
     }
@@ -39874,6 +39877,16 @@ impl SseEncode for Option<crate::PaddleInferenceBackend> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::PaddleInferenceBackend>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::PaddleOcrConfig> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::PaddleOcrConfig>::sse_encode(value, serializer);
         }
     }
 }
