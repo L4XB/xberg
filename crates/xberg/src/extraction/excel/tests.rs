@@ -3,6 +3,8 @@
 
 use super::*;
 
+mod datetime;
+
 /// Permissive `SecurityLimits` for tests that only care about the entry-count
 /// ceiling and want the default ratio/size limits (which any small test fixture
 /// passes comfortably).
@@ -169,39 +171,6 @@ fn test_format_cell_value_datetime() {
     let result = format_cell_to_string(&dt);
     assert!(!result.is_empty());
     assert!(result.contains('-'), "Expected datetime string, got: {}", result);
-}
-
-#[test]
-fn test_format_cell_value_date_time_and_duration_kinds() {
-    use calamine::{ExcelDateTime, ExcelDateTimeType};
-    let cell = |value: f64, kind: ExcelDateTimeType| {
-        format_cell_to_string(&Data::DateTime(ExcelDateTime::new(value, kind, false)))
-    };
-
-    // 45565 is 2024-09-30; a whole-number serial is a date with no time of day.
-    assert_eq!(cell(45565.0, ExcelDateTimeType::DateTime), "2024-09-30");
-    assert_eq!(cell(45565.5, ExcelDateTimeType::DateTime), "2024-09-30 12:00:00");
-    // Below one day the serial is a time of day, not a moment on 1899-12-31.
-    assert_eq!(cell(0.5, ExcelDateTimeType::DateTime), "12:00:00");
-    assert_eq!(cell(0.0, ExcelDateTimeType::DateTime), "00:00:00");
-    // `[h]:mm` and similar formats are elapsed time, so the hours keep counting.
-    assert_eq!(cell(1.5, ExcelDateTimeType::TimeDelta), "36:00:00");
-    assert_eq!(cell(0.0625, ExcelDateTimeType::TimeDelta), "1:30:00");
-    assert_eq!(cell(-0.25, ExcelDateTimeType::TimeDelta), "-6:00:00");
-    // 1 h + 1 min + 1 s summed as day fractions lands one ulp below 3661 s, so the
-    // seconds are rounded, not truncated.
-    assert_eq!(
-        cell(1.0 / 24.0 + 1.0 / 1440.0 + 1.0 / 86400.0, ExcelDateTimeType::TimeDelta),
-        "1:01:01"
-    );
-}
-
-#[test]
-fn test_format_cell_value_date_in_the_1904_system() {
-    use calamine::{ExcelDateTime, ExcelDateTimeType};
-    // The 1904 epoch shifts serials by 1462 days: 44103 is 2024-09-30 there.
-    let date = Data::DateTime(ExcelDateTime::new(44103.0, ExcelDateTimeType::DateTime, true));
-    assert_eq!(format_cell_to_string(&date), "2024-09-30");
 }
 
 #[test]

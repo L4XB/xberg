@@ -94,6 +94,8 @@ use package_metadata::{
     extract_xlsx_revisions_from_file,
 };
 
+mod datetime;
+
 /// Format dispatch and the `read_excel_file`/`read_excel_bytes` entry points, split out to
 /// keep this file under the line-count limit.
 mod open;
@@ -739,35 +741,10 @@ fn format_cell_to_string(data: &Data) -> String {
                 "false".to_string()
             }
         }
-        Data::DateTime(dt) => format_excel_datetime(dt),
+        Data::DateTime(dt) => datetime::format_excel_datetime(dt),
         Data::Error(e) => format!("#ERR: {:?}", e),
         Data::DateTimeIso(s) => s.clone(),
         Data::DurationIso(s) => format!("DURATION: {}", s),
-    }
-}
-
-/// Render an Excel date/time serial as the kind of value the sheet shows.
-///
-/// calamine reports every date-, time- or duration-formatted number as
-/// `DateTime` and keeps only the duration flag, so the rest comes from the
-/// serial itself: a value below one day is a time of day, and a whole number
-/// is a calendar date. Rendering every serial as a timestamp put a time of day
-/// on 1899-12-31 and turned a 36-hour `[h]:mm` duration into 1900-01-01 12:00.
-fn format_excel_datetime(dt: &calamine::ExcelDateTime) -> String {
-    if dt.is_duration() {
-        let total_seconds = (dt.as_f64() * 86_400.0).round() as i64;
-        let sign = if total_seconds < 0 { "-" } else { "" };
-        let seconds = total_seconds.unsigned_abs();
-        return format!("{sign}{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60);
-    }
-    let serial = dt.as_f64();
-    let (year, month, day, hour, min, sec, _milli) = dt.to_ymd_hms_milli();
-    if (0.0..1.0).contains(&serial) {
-        format!("{hour:02}:{min:02}:{sec:02}")
-    } else if serial.fract() == 0.0 {
-        format!("{year:04}-{month:02}-{day:02}")
-    } else {
-        format!("{year:04}-{month:02}-{day:02} {hour:02}:{min:02}:{sec:02}")
     }
 }
 
