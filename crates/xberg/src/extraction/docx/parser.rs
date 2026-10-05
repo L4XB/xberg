@@ -2827,7 +2827,9 @@ impl<R: Read + Seek> DocxParser<R> {
                                 for attr in e.attributes().flatten() {
                                     if attr.key.as_ref() == "w:id" {
                                         let id = attr.value.as_ref();
-                                        if id != "0" && id != "1" {
+                                        // A reference in the body always points at a real note;
+                                        // id 1 is Word's first one (see `parse_notes`).
+                                        if id != "-1" && id != "0" {
                                             run.text.push_str(&format!("[^{}]", id));
                                             page_breaks.text_since_break = true;
                                         }
@@ -3429,15 +3431,23 @@ impl<R: Read + Seek> DocxParser<R> {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) if matches!(e.name().as_ref(), "w:footnote" | "w:endnote") => {
                     let mut id = String::new();
+                    // The separator lines above the notes carry a `w:type` (separator,
+                    // continuationSeparator, continuationNotice); a real note has none or
+                    // "normal". Their ids differ by producer: Word writes the separators as -1
+                    // and 0 and its first note as 1, LibreOffice uses 0 and 1 and starts at 2.
+                    // Skipping id 1 unconditionally dropped the first note of every Word file.
+                    let mut is_separator = false;
                     for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == "w:id" {
-                            id = attr.value.as_ref().to_string();
+                        match attr.key.as_ref() {
+                            "w:id" => id = attr.value.as_ref().to_string(),
+                            "w:type" => is_separator = attr.value.as_ref() != "normal",
+                            _ => {}
                         }
                     }
                     let stop_tag = e.name().as_ref().to_string();
                     let out = self.parse_body_elements(&mut reader, Some(stop_tag), budget, warnings)?;
 
-                    if id != "-1" && id != "0" && id != "1" {
+                    if !is_separator && id != "-1" && id != "0" {
                         let mut paragraphs = out.paragraphs;
                         for table in out.tables {
                             for row in table.rows {
@@ -4070,20 +4080,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_separator_footnotes_filtered() {
-        let xml = r#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-            <w:footnote w:id="0">
-                <w:p><w:r><w:t>separator</w:t></w:r></w:p>
-            </w:footnote>
-            <w:footnote w:id="1">
-                <w:p><w:r><w:t>continuation</w:t></w:r></w:p>
-            </w:footnote>
-            <w:footnote w:id="2">
-                <w:p><w:r><w:t>Actual footnote</w:t></w:r></w:p>
-            </w:footnote>
-        </w:footnotes>"#;
-
+    fn parse_footnotes_xml(xml: &str) -> Vec<Note> {
         let parser_struct = DocxParser {
             archive: zip::ZipArchive::new(std::io::Cursor::new(create_minimal_zip())).unwrap(),
             relationships: AHashMap::new(),
@@ -4091,16 +4088,64 @@ mod tests {
             theme: None,
         };
         let mut notes = Vec::new();
-        {
-            let mut budget = crate::extractors::security::SecurityBudget::with_defaults();
-            let mut warnings = Vec::new();
-            parser_struct
-                .parse_notes(xml, &mut notes, NoteType::Footnote, &mut budget, &mut warnings)
-                .unwrap();
-        }
+        let mut budget = crate::extractors::security::SecurityBudget::with_defaults();
+        let mut warnings = Vec::new();
+        parser_struct
+            .parse_notes(xml, &mut notes, NoteType::Footnote, &mut budget, &mut warnings)
+            .unwrap();
+        notes
+    }
+
+    #[test]
+    fn test_separator_footnotes_filtered() {
+        // LibreOffice numbers the separators 0 and 1 and its first note 2.
+        let xml = r#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:footnote w:type="separator" w:id="0">
+                <w:p><w:r><w:separator/></w:r></w:p>
+            </w:footnote>
+            <w:footnote w:type="continuationSeparator" w:id="1">
+                <w:p><w:r><w:continuationSeparator/></w:r></w:p>
+            </w:footnote>
+            <w:footnote w:id="2">
+                <w:p><w:r><w:t>Actual footnote</w:t></w:r></w:p>
+            </w:footnote>
+        </w:footnotes>"#;
+
+        let notes = parse_footnotes_xml(xml);
 
         assert_eq!(notes.len(), 1, "Only actual footnote should remain");
         assert_eq!(notes[0].id, "2");
+    }
+
+    #[test]
+    fn test_word_first_footnote_is_kept() {
+        // Word numbers the separators -1 and 0, so its first real note is id 1.
+        let xml = r#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:footnote w:type="separator" w:id="-1">
+                <w:p><w:r><w:separator/></w:r></w:p>
+            </w:footnote>
+            <w:footnote w:type="continuationSeparator" w:id="0">
+                <w:p><w:r><w:continuationSeparator/></w:r></w:p>
+            </w:footnote>
+            <w:footnote w:id="1">
+                <w:p><w:r><w:t>First footnote</w:t></w:r></w:p>
+            </w:footnote>
+            <w:footnote w:type="normal" w:id="2">
+                <w:p><w:r><w:t>Second footnote</w:t></w:r></w:p>
+            </w:footnote>
+            <w:footnote w:type="continuationNotice" w:id="3">
+                <w:p><w:r><w:t>continued on next page</w:t></w:r></w:p>
+            </w:footnote>
+        </w:footnotes>"#;
+
+        let notes = parse_footnotes_xml(xml);
+        let ids: Vec<&str> = notes.iter().map(|note| note.id.as_str()).collect();
+
+        assert_eq!(
+            ids,
+            ["1", "2"],
+            "real notes kept, separators and the continuation notice skipped"
+        );
     }
 
     fn create_minimal_zip() -> Vec<u8> {
@@ -6519,7 +6564,7 @@ mod tests {
         let doc = parse_xml(&xml);
         let text = doc.paragraphs[0].to_text();
         assert!(!text.contains("[^0]"), "Separator id 0 should be filtered");
-        assert!(!text.contains("[^1]"), "Separator id 1 should be filtered");
+        assert!(text.contains("[^1]"), "Word's first footnote is id 1: {}", text);
         assert!(text.contains("[^2]"), "Real footnote 2 should be present");
     }
 
