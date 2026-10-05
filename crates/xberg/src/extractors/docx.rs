@@ -1974,8 +1974,8 @@ mod tests {
 
         let footnotes_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:footnote w:id="0"><w:p><w:r><w:t>separator</w:t></w:r></w:p></w:footnote>
-  <w:footnote w:id="1"><w:p><w:r><w:t>continuation</w:t></w:r></w:p></w:footnote>
+  <w:footnote w:type="separator" w:id="0"><w:p><w:r><w:t>separator</w:t></w:r></w:p></w:footnote>
+  <w:footnote w:type="continuationSeparator" w:id="1"><w:p><w:r><w:t>continuation</w:t></w:r></w:p></w:footnote>
   <w:footnote w:id="2"><w:p><w:r><w:t>This is the footnote content.</w:t></w:r></w:p></w:footnote>
 </w:footnotes>"#;
 
@@ -2706,8 +2706,8 @@ mod tests {
 
         let endnotes_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:endnote w:id="0"><w:p><w:r><w:t>separator</w:t></w:r></w:p></w:endnote>
-  <w:endnote w:id="1"><w:p><w:r><w:t>continuation</w:t></w:r></w:p></w:endnote>
+  <w:endnote w:type="separator" w:id="0"><w:p><w:r><w:t>separator</w:t></w:r></w:p></w:endnote>
+  <w:endnote w:type="continuationSeparator" w:id="1"><w:p><w:r><w:t>continuation</w:t></w:r></w:p></w:endnote>
   <w:endnote w:id="2"><w:p><w:r><w:t>This is the endnote.</w:t></w:r></w:p></w:endnote>
 </w:endnotes>"#;
 
@@ -3665,8 +3665,8 @@ mod tests {
 </w:comments>"#;
         let footnotes_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:footnote w:id="0"><w:p><w:r><w:t>separator</w:t></w:r></w:p></w:footnote>
-  <w:footnote w:id="1"><w:p><w:r><w:t>continuation</w:t></w:r></w:p></w:footnote>
+  <w:footnote w:type="separator" w:id="0"><w:p><w:r><w:t>separator</w:t></w:r></w:p></w:footnote>
+  <w:footnote w:type="continuationSeparator" w:id="1"><w:p><w:r><w:t>continuation</w:t></w:r></w:p></w:footnote>
   <w:footnote w:id="2"><w:p><w:r><w:t>This is a real footnote.</w:t></w:r></w:p></w:footnote>
 </w:footnotes>"#;
 
@@ -3909,8 +3909,8 @@ mod tests {
 </w:document>"#;
         let footnotes_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:footnote w:id="0"><w:p><w:r><w:t>separator</w:t></w:r></w:p></w:footnote>
-  <w:footnote w:id="1"><w:p><w:r><w:t>continuation</w:t></w:r></w:p></w:footnote>
+  <w:footnote w:type="separator" w:id="0"><w:p><w:r><w:t>separator</w:t></w:r></w:p></w:footnote>
+  <w:footnote w:type="continuationSeparator" w:id="1"><w:p><w:r><w:t>continuation</w:t></w:r></w:p></w:footnote>
   <w:footnote w:id="2">
     <w:tbl><w:tr><w:tc><w:p><w:r><w:t>Note cell text</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
   </w:footnote>
