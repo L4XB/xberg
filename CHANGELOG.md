@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **(api): `KeywordConfig.yake_params`, `KeywordConfig.rake_params` and `TesseractConfig.preprocessing` are described as a direct `$ref` rather than `oneOf[$ref, null]`.** All three are omitted from the payload when unset. GH#1841 annotated the omission-only references in types the OpenAPI document registers, and these two config types are registered by downstream specs that embed them instead. `TesseractConfig.preprocessing` also no longer advertises `"default": null`, which the struct-level `#[serde(default)]` added. Wire payloads and generated bindings do not change. (GH#2041)
 - **(docx): keep the first footnote and endnote of a Word document.** Word numbers the separator
   lines in `footnotes.xml`/`endnotes.xml` -1 and 0 and its first real note 1, and the parser skipped
   id 1 as a separator, so the first footnote and the first endnote were dropped with their markers.
