@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **(excel): date, time and duration cells read as the sheet shows them.** A time-only cell was
+  rendered on the date 1899-12-31, a date-only cell gained ` 00:00:00`, and a `[h]:mm` duration of
+  36 hours read as `1900-01-01 12:00:00`. Times of day now render as `HH:MM:SS`, serials with no time
+  of day as `YYYY-MM-DD`, other date-times as before, and elapsed-time formats as total hours `H:MM:SS`.
+
 ## [1.3.4] - 2026-10-04
 
 ### Fixed
