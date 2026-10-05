@@ -16,10 +16,7 @@ const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordproce
 #[test]
 fn first_footnote_and_endnote_of_a_word_document_are_kept() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/office/word_footnote_ids.docx");
-    let Ok(bytes) = std::fs::read(&path) else {
-        eprintln!("skipping: fixture not present at {path:?}");
-        return;
-    };
+    let bytes = std::fs::read(&path).expect("Word footnote fixture must be present");
     let doc = extract_bytes_document_blocking(&bytes, DOCX_MIME, &ExtractionConfig::default())
         .expect("extraction must succeed");
 
