@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   id 1 as a separator, so the first footnote and the first endnote were dropped with their markers.
   Separators are now recognised by their `w:type`; LibreOffice's numbering (separators 0 and 1) is
   handled as before.
+- **(docx): a footnote and an endnote with the same number are kept apart.** Word numbers footnotes
+  and endnotes independently, and both were keyed `fn<id>`, so in Markdown, HTML and Djot output the
+  first endnote replaced the first footnote and both references pointed at it. Endnotes are now
+  keyed `en<id>`, as in the ODT and WordPerfect extractors.
 - **(pdf): malformed classic xref tables no longer cache the wrong indirect object.** When a subsection starts at
   object 1 but includes object 0's free entry, native PDF parsing now recovers each shifted reference from its actual
   object header instead of treating the page tree as the catalog. (GH#2044)

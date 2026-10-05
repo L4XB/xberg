@@ -83,6 +83,12 @@ pub struct Paragraph {
     /// is filtered out — it records the last edit position, not a link target.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bookmarks: Vec<String>,
+    /// Footnote and endnote references in this paragraph, in reading order.
+    ///
+    /// The runs carry the same references as `[^id]` text, which cannot tell
+    /// footnote 1 from endnote 1: Word numbers the two kinds independently.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub note_refs: Vec<NoteRef>,
     /// True when this paragraph is part of a table of contents.
     ///
     /// Set by either of the two markers Word emits: a `w:sdt` whose
@@ -90,6 +96,16 @@ pub struct Paragraph {
     /// field code.
     #[serde(default)]
     pub in_table_of_contents: bool,
+}
+
+/// A `w:footnoteReference` or `w:endnoteReference` in a paragraph.
+#[cfg_attr(alef, alef(skip))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NoteRef {
+    /// The `w:id` of the referenced note.
+    pub id: String,
+    /// Whether the reference points at a footnote or an endnote.
+    pub note_type: NoteType,
 }
 
 /// A formatted text run within a DOCX paragraph.
@@ -203,7 +219,7 @@ pub struct Note {
 
 /// Distinguishes footnotes from endnotes in DOCX documents.
 #[cfg_attr(alef, alef(skip))]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum NoteType {
     /// Note appears at the bottom of the page.
     Footnote,
@@ -2823,6 +2839,11 @@ impl<R: Read + Seek> DocxParser<R> {
                             );
                         }
                         "w:footnoteReference" | "w:endnoteReference" => {
+                            let note_type = if name.as_ref() == "w:endnoteReference" {
+                                NoteType::Endnote
+                            } else {
+                                NoteType::Footnote
+                            };
                             if let Some(ref mut run) = current_run {
                                 for attr in e.attributes().flatten() {
                                     if attr.key.as_ref() == "w:id" {
@@ -2832,6 +2853,12 @@ impl<R: Read + Seek> DocxParser<R> {
                                         if id != "-1" && id != "0" {
                                             run.text.push_str(&format!("[^{}]", id));
                                             page_breaks.text_since_break = true;
+                                            if let Some(ref mut paragraph) = current_paragraph {
+                                                paragraph.note_refs.push(NoteRef {
+                                                    id: id.to_string(),
+                                                    note_type,
+                                                });
+                                            }
                                         }
                                     }
                                 }

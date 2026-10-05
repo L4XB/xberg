@@ -65,6 +65,18 @@ fn drawing_alt_text(drawing: &crate::extraction::docx::drawing::Drawing) -> Opti
         .or_else(|| properties.name.clone().filter(|name| !name.is_empty()))
 }
 
+/// Anchor key shared by a note's reference and its definition.
+///
+/// Word numbers footnotes and endnotes independently, so footnote 1 and endnote 1
+/// need different keys. The "fn"/"en" prefixes match the ODT and WordPerfect
+/// extractors (#118).
+fn note_key(note_type: crate::extraction::docx::parser::NoteType, id: &str) -> String {
+    match note_type {
+        crate::extraction::docx::parser::NoteType::Footnote => format!("fn{id}"),
+        crate::extraction::docx::parser::NoteType::Endnote => format!("en{id}"),
+    }
+}
+
 /// Build an `InternalDocument` from parsed DOCX data.
 ///
 /// Creates a flat element list with headings, paragraphs, lists, tables, images,
@@ -259,19 +271,9 @@ fn build_internal_document(
                         }
                     }
 
-                    let mut search_start = 0;
-                    while let Some(start) = text[search_start..].find("[^") {
-                        let abs_start = search_start + start;
-                        if let Some(end) = text[abs_start..].find(']') {
-                            let ref_id = &text[abs_start + 2..abs_start + end];
-                            if !ref_id.is_empty() && ref_id.chars().all(|c| c.is_ascii_digit()) {
-                                let key = format!("fn{}", ref_id);
-                                builder.push_footnote_ref(ref_id, &key, Some(current_page));
-                            }
-                            search_start = abs_start + end + 1;
-                        } else {
-                            break;
-                        }
+                    for note_ref in &paragraph.note_refs {
+                        let key = note_key(note_ref.note_type, &note_ref.id);
+                        builder.push_footnote_ref(&note_ref.id, &key, Some(current_page));
                     }
 
                     // Comment reference markers (#82, #300). Structurally a comment is
@@ -426,7 +428,7 @@ fn build_internal_document(
             .collect::<Vec<_>>()
             .join(" ");
         if !text.is_empty() {
-            let key = format!("fn{}", note.id);
+            let key = note_key(note.note_type, &note.id);
             let idx = builder.push_footnote_definition(&text, &key, None);
             builder.set_layer(idx, ContentLayer::Footnote);
         }
@@ -2015,6 +2017,88 @@ mod tests {
         assert!(
             !doc.relationships.is_empty(),
             "Should have footnote relationships in DocumentStructure"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_footnote_and_endnote_with_the_same_id_stay_apart() {
+        // Word numbers footnotes and endnotes independently. Keyed `fn1` alike,
+        // endnote 1 replaced footnote 1 in every rendered list of notes.
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r><w:t>Text with a footnote</w:t></w:r>
+      <w:r><w:footnoteReference w:id="1"/></w:r>
+      <w:r><w:t> and an endnote</w:t></w:r>
+      <w:r><w:endnoteReference w:id="1"/></w:r>
+    </w:p>
+  </w:body>
+</w:document>"#;
+
+        let footnotes_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>
+  <w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>
+  <w:footnote w:id="1"><w:p><w:r><w:t>The footnote.</w:t></w:r></w:p></w:footnote>
+</w:footnotes>"#;
+
+        let endnotes_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:endnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:endnote>
+  <w:endnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:endnote>
+  <w:endnote w:id="1"><w:p><w:r><w:t>The endnote.</w:t></w:r></w:p></w:endnote>
+</w:endnotes>"#;
+
+        let data = build_test_docx_with_parts(
+            document_xml,
+            None,
+            Some(footnotes_xml),
+            Some(endnotes_xml),
+            None,
+            None,
+            None,
+        );
+        let internal = DocxExtractor::new()
+            .extract_content(
+                &data,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                &ExtractionConfig::default(),
+            )
+            .await
+            .unwrap();
+
+        let anchors = |kind: crate::types::internal::ElementKind| {
+            internal
+                .elements
+                .iter()
+                .filter(|e| e.kind == kind)
+                .filter_map(|e| e.anchor.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            anchors(crate::types::internal::ElementKind::FootnoteRef),
+            ["fn1", "en1"]
+        );
+        assert_eq!(
+            anchors(crate::types::internal::ElementKind::FootnoteDefinition),
+            ["fn1", "en1"]
+        );
+
+        let result = crate::extraction::derive::derive_extraction_result(
+            internal,
+            false,
+            crate::core::config::OutputFormat::Markdown,
+        );
+        assert!(
+            result.content.contains("The footnote."),
+            "footnote text missing: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("The endnote."),
+            "endnote text missing: {}",
+            result.content
         );
     }
 
