@@ -16,10 +16,7 @@ const XLSX_MIME: &str = "application/vnd.openxmlformats-officedocument.spreadshe
 #[test]
 fn date_time_and_duration_cells_read_as_the_sheet_shows_them() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/office/date_time_cells.xlsx");
-    let Ok(bytes) = std::fs::read(&path) else {
-        eprintln!("skipping: fixture not present at {path:?}");
-        return;
-    };
+    let bytes = std::fs::read(&path).expect("date/time XLSX fixture must be present");
     let doc = extract_bytes_document_blocking(&bytes, XLSX_MIME, &ExtractionConfig::default())
         .expect("extraction must succeed");
     let table = doc.tables.first().expect("a table must be extracted");
