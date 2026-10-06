@@ -36,6 +36,7 @@ pub(crate) enum DocumentElement {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Document {
     pub paragraphs: Vec<Paragraph>,
+    pub note_refs_by_paragraph: AHashMap<usize, Vec<NoteRef>>,
     pub tables: Vec<Table>,
     pub headers: Vec<HeaderFooter>,
     pub footers: Vec<HeaderFooter>,
@@ -83,12 +84,6 @@ pub struct Paragraph {
     /// is filtered out — it records the last edit position, not a link target.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bookmarks: Vec<String>,
-    /// Footnote and endnote references in this paragraph, in reading order.
-    ///
-    /// The runs carry the same references as `[^id]` text, which cannot tell
-    /// footnote 1 from endnote 1: Word numbers the two kinds independently.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub note_refs: Vec<NoteRef>,
     /// True when this paragraph is part of a table of contents.
     ///
     /// Set by either of the two markers Word emits: a `w:sdt` whose
@@ -98,14 +93,10 @@ pub struct Paragraph {
     pub in_table_of_contents: bool,
 }
 
-/// A `w:footnoteReference` or `w:endnoteReference` in a paragraph.
-#[cfg_attr(alef, alef(skip))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NoteRef {
-    /// The `w:id` of the referenced note.
-    pub id: String,
-    /// Whether the reference points at a footnote or an endnote.
-    pub note_type: NoteType,
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NoteRef {
+    pub(crate) id: String,
+    pub(crate) note_type: NoteType,
 }
 
 /// A formatted text run within a DOCX paragraph.
@@ -219,7 +210,7 @@ pub struct Note {
 
 /// Distinguishes footnotes from endnotes in DOCX documents.
 #[cfg_attr(alef, alef(skip))]
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NoteType {
     /// Note appears at the bottom of the page.
     Footnote,
@@ -1237,6 +1228,7 @@ impl TableContext {
 #[derive(Debug, Default)]
 struct BodyParseOutputs {
     paragraphs: Vec<Paragraph>,
+    note_refs_by_paragraph: AHashMap<usize, Vec<NoteRef>>,
     tables: Vec<Table>,
     drawings: Vec<super::drawing::Drawing>,
     elements: Vec<DocumentElement>,
@@ -2421,6 +2413,7 @@ impl<R: Read + Seek> DocxParser<R> {
             out.ambiguous_sections,
         );
         document.paragraphs = out.paragraphs;
+        document.note_refs_by_paragraph = out.note_refs_by_paragraph;
         document.tables = out.tables;
         document.drawings = out.drawings;
         document.elements = out.elements;
@@ -2853,11 +2846,14 @@ impl<R: Read + Seek> DocxParser<R> {
                                         if id != "-1" && id != "0" {
                                             run.text.push_str(&format!("[^{}]", id));
                                             page_breaks.text_since_break = true;
-                                            if let Some(ref mut paragraph) = current_paragraph {
-                                                paragraph.note_refs.push(NoteRef {
-                                                    id: id.to_string(),
-                                                    note_type,
-                                                });
+                                            if table_stack.is_empty() && current_paragraph.is_some() {
+                                                out.note_refs_by_paragraph
+                                                    .entry(current_paragraph_index)
+                                                    .or_default()
+                                                    .push(NoteRef {
+                                                        id: id.to_string(),
+                                                        note_type,
+                                                    });
                                             }
                                         }
                                     }

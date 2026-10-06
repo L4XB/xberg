@@ -271,9 +271,11 @@ fn build_internal_document(
                         }
                     }
 
-                    for note_ref in &paragraph.note_refs {
-                        let key = note_key(note_ref.note_type, &note_ref.id);
-                        builder.push_footnote_ref(&note_ref.id, &key, Some(current_page));
+                    if let Some(note_refs) = doc.note_refs_by_paragraph.get(idx) {
+                        for note_ref in note_refs {
+                            let key = note_key(note_ref.note_type, &note_ref.id);
+                            builder.push_footnote_ref(&note_ref.id, &key, Some(current_page));
+                        }
                     }
 
                     // Comment reference markers (#82, #300). Structurally a comment is
