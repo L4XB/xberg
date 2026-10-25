@@ -725,6 +725,23 @@ fn should_skip_many_unclosed_elements_in_linear_time() {
 }
 
 #[test]
+fn should_keep_one_record_entry_for_many_heads_with_an_unclosed_title() {
+    let html = format!(
+        "<html>{}<body><p>end</p></body></html>",
+        "<head><title>x</head>".repeat(20_000)
+    );
+    tag_handlers::CLOSING_TAG_SEARCHES.with(|count| count.set(0));
+    tag_handlers::MISSING_RECORD_PEAK.with(|peak| peak.set(0));
+    let doc = build_document_structure(&html);
+    let text: String = doc.nodes.iter().filter_map(|node| node.content.text()).collect();
+    assert_eq!(text.matches('x').count(), 20_000);
+    assert!(text.ends_with("end"), "{text:?}");
+    // Each head searches its own short span once, and the record stays at one entry ~keep
+    assert_eq!(tag_handlers::CLOSING_TAG_SEARCHES.with(|count| count.get()), 20_000);
+    assert_eq!(tag_handlers::MISSING_RECORD_PEAK.with(|peak| peak.get()), 1);
+}
+
+#[test]
 fn should_find_the_end_of_the_head_once_for_many_heads() {
     let html = format!(
         "<html>{}</head><body><p>end</p></body></html>",

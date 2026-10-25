@@ -314,16 +314,23 @@ impl HtmlWalker<'_, '_> {
 
     /// [`Self::find_close_tag`] for a closing tag that has to end by `limit`.
     fn find_close_tag_before(&mut self, tag: &str, limit: usize) -> Option<(usize, usize)> {
-        if self
-            .missing_close_tags
-            .iter()
-            .any(|(missing, missing_until)| missing == tag && *missing_until >= limit)
+        let recorded = self.missing_close_tags.iter_mut().find(|(missing, _)| missing == tag);
+        if recorded
+            .as_ref()
+            .is_some_and(|(_, missing_until)| *missing_until >= limit)
         {
             return None;
         }
         let found = find_closing_tag(&self.src[self.pos..limit], tag);
         if found.is_none() {
-            self.missing_close_tags.push((tag.to_string(), limit));
+            // Raise the tag's entry instead of adding one, so many heads that each leave a
+            // title open keep the record at one entry. ~keep
+            match recorded {
+                Some((_, missing_until)) => *missing_until = limit,
+                None => self.missing_close_tags.push((tag.to_string(), limit)),
+            }
+            #[cfg(test)]
+            MISSING_RECORD_PEAK.with(|peak| peak.set(peak.get().max(self.missing_close_tags.len())));
         }
         found
     }
@@ -537,9 +544,11 @@ impl HtmlWalker<'_, '_> {
 
 #[cfg(test)]
 thread_local! {
-    // Calls of `find_closing_tag` and `find_head_end`, counted for the linear-time tests ~keep
+    // Calls of `find_closing_tag` and `find_head_end`, and the largest record of missing closing
+    // tags, counted for the linear-time tests ~keep
     pub(super) static CLOSING_TAG_SEARCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static HEAD_END_SEARCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static MISSING_RECORD_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Start and end of the first closing tag for `tag` in `html`. As in HTML, the name matches in any
