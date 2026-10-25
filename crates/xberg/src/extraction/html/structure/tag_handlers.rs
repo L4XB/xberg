@@ -44,7 +44,7 @@ impl HtmlWalker<'_, '_> {
             }
             // The head's `<title>` names the document, in a browser tab, and is not part of its
             // text. The `<title>` of an inline SVG is its accessible name and stays (#140). ~keep
-            "title" if self.in_head => self.handle_open_media(tag),
+            "title" if self.in_head => self.handle_open_head_title(),
             "span" | "html" | "body" | "title" | "link" => {}
             _ => {}
         }
@@ -280,6 +280,21 @@ impl HtmlWalker<'_, '_> {
     fn handle_open_head(&mut self) {
         self.in_head = true;
         self.meta_entries.clear();
+        if self.head_end.is_none_or(|end| end < self.pos) {
+            self.head_end = Some(self.pos + find_head_end(&self.src[self.pos..]));
+        }
+    }
+
+    /// Skips the head's `<title>`. A title cannot hold the body, so only a closing tag before the
+    /// end of the head counts. A title without one is left open, as an unclosed `<script>` is, and
+    /// a `<title>` after the end of a head without `</head>` is not the head's. ~keep
+    fn handle_open_head_title(&mut self) {
+        let Some(head_end) = self.head_end.filter(|&end| end > self.pos) else {
+            return;
+        };
+        if let Some((_, close_end)) = self.find_close_tag_before("title", head_end) {
+            self.pos += close_end;
+        }
     }
 
     fn handle_open_meta(&mut self, attrs_str: &str) {
@@ -291,16 +306,24 @@ impl HtmlWalker<'_, '_> {
     }
 
     /// Start and end, from the walker's position, of the closing tag of a `<script>`, `<style>`,
-    /// `<title>`, `<video>`, `<audio>` or `<math>`. Every unclosed one used to search the rest of
-    /// the document for its closing tag again, so a run of them took quadratic time. A closing tag
-    /// that is missing once is now not searched for again.
+    /// `<title>`, `<video>`, `<audio>` or `<math>`. A closing tag that is missing is remembered and
+    /// not searched for again, so a run of unclosed openers takes linear time.
     fn find_close_tag(&mut self, tag: &str) -> Option<(usize, usize)> {
-        if self.missing_close_tags.iter().any(|missing| missing == tag) {
+        self.find_close_tag_before(tag, self.src.len())
+    }
+
+    /// [`Self::find_close_tag`] for a closing tag that has to end by `limit`.
+    fn find_close_tag_before(&mut self, tag: &str, limit: usize) -> Option<(usize, usize)> {
+        if self
+            .missing_close_tags
+            .iter()
+            .any(|(missing, missing_until)| missing == tag && *missing_until >= limit)
+        {
             return None;
         }
-        let found = find_closing_tag(&self.src[self.pos..], tag);
+        let found = find_closing_tag(&self.src[self.pos..limit], tag);
         if found.is_none() {
-            self.missing_close_tags.push(tag.to_string());
+            self.missing_close_tags.push((tag.to_string(), limit));
         }
         found
     }
@@ -512,11 +535,20 @@ impl HtmlWalker<'_, '_> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    // Calls of `find_closing_tag` and `find_head_end`, counted for the linear-time tests ~keep
+    pub(super) static CLOSING_TAG_SEARCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static HEAD_END_SEARCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Start and end of the first closing tag for `tag` in `html`. As in HTML, the name matches in any
-/// ASCII case and may be followed by whitespace or `/` before the `>` (`</TITLE >`), so a later
-/// exact `</title>`, such as an SVG's, is not taken for it. Each `</` is looked at once and the
-/// whitespace after a name is not rescanned, so the search stays linear.
+/// ASCII case, and when whitespace or `/` follows it, the rest up to the `>` is ignored (`</TITLE >`,
+/// `</title foo>`), so a later exact `</title>`, such as an SVG's, is not taken for it. Each `</`
+/// is looked at once, so the search stays linear.
 fn find_closing_tag(html: &str, tag: &str) -> Option<(usize, usize)> {
+    #[cfg(test)]
+    CLOSING_TAG_SEARCHES.with(|count| count.set(count.get() + 1));
     let bytes = html.as_bytes();
     let mut from = 0;
     while let Some(offset) = html[from..].find("</") {
@@ -525,21 +557,38 @@ fn find_closing_tag(html: &str, tag: &str) -> Option<(usize, usize)> {
         if bytes
             .get(start + 2..name_end)
             .is_some_and(|name| name.eq_ignore_ascii_case(tag.as_bytes()))
+            && bytes.get(name_end).is_some_and(|&byte| ends_tag_name(byte))
         {
-            let mut end = name_end;
-            while bytes
-                .get(end)
-                .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b'/')
-            {
-                end += 1;
-            }
-            if bytes.get(end) == Some(&b'>') {
-                return Some((start, end + 1));
-            }
-            from = end;
-        } else {
-            from = start + 2;
+            return html[name_end..].find('>').map(|close| (start, name_end + close + 1));
         }
+        from = start + 2;
     }
     None
+}
+
+/// Offset in `html` of the end of the head: its `</head>`, or the `<body>` that ends it without
+/// one. `html.len()` when neither occurs.
+fn find_head_end(html: &str) -> usize {
+    #[cfg(test)]
+    HEAD_END_SEARCHES.with(|count| count.set(count.get() + 1));
+    let bytes = html.as_bytes();
+    let is_tag_at = |start: usize, name: &[u8]| {
+        bytes
+            .get(start..start + name.len())
+            .is_some_and(|found| found.eq_ignore_ascii_case(name))
+            && bytes.get(start + name.len()).is_none_or(|&byte| ends_tag_name(byte))
+    };
+    let mut from = 0;
+    while let Some(offset) = html[from..].find('<') {
+        let start = from + offset;
+        if is_tag_at(start, b"</head") || is_tag_at(start, b"<body") {
+            return start;
+        }
+        from = start + 1;
+    }
+    html.len()
+}
+
+fn ends_tag_name(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || byte == b'/' || byte == b'>'
 }

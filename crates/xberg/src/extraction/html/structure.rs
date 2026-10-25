@@ -192,9 +192,12 @@ struct HtmlWalker<'a, 'b> {
     figure: Option<FigureContext>,
     in_head: bool,
     meta_entries: Vec<(String, String)>,
-    /// Closing tags that do not occur after the walker's position. The walker only moves
-    /// forward, so they never will, and they are not searched for again.
-    missing_close_tags: Vec<String>,
+    /// Closing tags that do not occur between the walker's position and the end their search was
+    /// limited to: the end of the document, or of the head for its `<title>`. The walker only
+    /// moves forward, so a search up to that end or a nearer one is not made again.
+    missing_close_tags: Vec<(String, usize)>,
+    /// Where the current head ends: at its `</head>`, or at the `<body>` that ends it without one.
+    head_end: Option<usize>,
 
     pending_classes: Option<String>,
 }
@@ -224,6 +227,7 @@ impl<'a, 'b> HtmlWalker<'a, 'b> {
             in_head: false,
             meta_entries: Vec::new(),
             missing_close_tags: Vec::new(),
+            head_end: None,
             pending_classes: None,
         }
     }

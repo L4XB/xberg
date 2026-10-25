@@ -672,8 +672,8 @@ fn test_head_title_is_not_body_text() {
 
 #[test]
 fn should_close_a_head_title_whatever_the_case_of_its_closing_tag() {
-    // An exact `</title>` search skipped to the SVG's title and dropped the body before it ~keep
-    for closing in ["</TITLE>", "</Title >", "</title\n>", "</title/>"] {
+    // Each of these ends the head title, so the body before the SVG's `</title>` stays ~keep
+    for closing in ["</TITLE>", "</Title >", "</title\n>", "</title/>", "</title foo>"] {
         let html = format!(
             "<html><head><title>Page{closing}</head><body><p>KEPT_BODY</p>\
              <svg><title>SVG name</title></svg></body></html>"
@@ -711,11 +711,69 @@ fn should_skip_many_unclosed_elements_in_linear_time() {
             "<html><head>{}</head><body><p>end</p></body></html>",
             format!("{opener}x ").repeat(20_000)
         );
+        tag_handlers::CLOSING_TAG_SEARCHES.with(|count| count.set(0));
         let doc = build_document_structure(&html);
         let text: String = doc.nodes.iter().filter_map(|node| node.content.text()).collect();
         assert_eq!(text.matches('x').count(), 20_000, "{opener}");
         assert!(text.ends_with("end"), "{opener}: {text:?}");
+        assert_eq!(
+            tag_handlers::CLOSING_TAG_SEARCHES.with(|count| count.get()),
+            1,
+            "{opener}"
+        );
     }
+}
+
+#[test]
+fn should_find_the_end_of_the_head_once_for_many_heads() {
+    let html = format!(
+        "<html>{}</head><body><p>end</p></body></html>",
+        "<head><title>t</title>".repeat(20_000)
+    );
+    tag_handlers::HEAD_END_SEARCHES.with(|count| count.set(0));
+    let doc = build_document_structure(&html);
+    let texts: Vec<&str> = doc.nodes.iter().filter_map(|node| node.content.text()).collect();
+    assert_eq!(texts, vec!["end"]);
+    assert_eq!(tag_handlers::HEAD_END_SEARCHES.with(|count| count.get()), 1);
+}
+
+#[test]
+fn should_keep_the_body_when_the_head_title_or_the_head_is_not_closed() {
+    for (head, expected) in [
+        ("<head><title>Page</head>", vec!["Page", "KEPT_BODY", "SVG name"]),
+        ("<head><title>Page", vec!["Page", "KEPT_BODY", "SVG name"]),
+        ("<head><title>Page</title>", vec!["KEPT_BODY", "SVG name"]),
+    ] {
+        let html = format!("<html>{head}<body><p>KEPT_BODY</p><svg><title>SVG name</title></svg></body></html>");
+        let doc = build_document_structure(&html);
+        let texts: Vec<&str> = doc.nodes.iter().filter_map(|node| node.content.text()).collect();
+        assert_eq!(texts, expected, "{head:?}");
+    }
+}
+
+#[test]
+fn should_skip_the_title_of_a_second_head_after_an_unclosed_one() {
+    let html = "<html><head><title>A</head><body><p>one</p></body></html>\
+                <html><head><title>B</title></head><body><p>two</p></body></html>";
+    let doc = build_document_structure(html);
+    let texts: Vec<&str> = doc.nodes.iter().filter_map(|node| node.content.text()).collect();
+    assert_eq!(texts, vec!["A", "one", "two"]);
+}
+
+#[test]
+fn should_find_a_closed_script_after_an_unclosed_video() {
+    let html = "<html><body><video>clip<script>var a;</script><p>after</p></body></html>";
+    let doc = build_document_structure(html);
+    assert!(
+        doc.nodes.iter().any(|node| matches!(
+            &node.content,
+            NodeContent::RawBlock { format, content } if format == "script" && content == "var a;"
+        )),
+        "{:?}",
+        doc.nodes
+    );
+    let texts: Vec<&str> = doc.nodes.iter().filter_map(|node| node.content.text()).collect();
+    assert!(texts.contains(&"after"), "{texts:?}");
 }
 
 #[test]
