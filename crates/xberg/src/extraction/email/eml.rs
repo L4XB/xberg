@@ -223,7 +223,9 @@ const LENIENT_BASE64: base64::engine::GeneralPurpose = base64::engine::GeneralPu
 /// end of the data. A last symbol left on its own holds six bits, no whole byte, and is dropped.
 ///
 /// `None` for any other part, including an attached message that `mail-parser` decoded but could
-/// not parse: it is flagged too, but keeps its `Base64` encoding and its decoded contents.
+/// not parse: it is flagged too, but keeps its `Base64` encoding and its decoded contents. Also
+/// `None` for text that is not base64 at all despite its label, such as a plain sentence: a line
+/// of base64 has no space between two symbols, and that text reads as it was.
 ///
 /// The encoded text is read from `message`, the message that owns `part`, at the part's body
 /// offsets. The contents of a text part are already decoded with its charset, so the base64 of a
@@ -237,22 +239,47 @@ pub(super) fn recover_base64_contents(
     let declares_base64 = part
         .content_transfer_encoding()
         .is_some_and(|encoding| encoding.trim().eq_ignore_ascii_case("base64"));
-    if !part.is_encoding_problem || part.encoding != mail_parser::Encoding::None || !declares_base64 {
+    if part.encoding != mail_parser::Encoding::None || !declares_base64 {
         return None;
     }
     let encoded = message
         .raw_message
         .get(part.offset_body as usize..part.offset_end as usize)?;
+    if encoded.split(|&byte| byte == b'\n').any(has_space_between_symbols) {
+        return None;
+    }
     let mut symbols: Vec<u8> = encoded
         .iter()
         .copied()
         .take_while(|&byte| byte != b'=')
-        .filter(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        .filter(|&byte| is_base64_symbol(byte))
         .collect();
     if symbols.len() % 4 == 1 {
         symbols.pop();
     }
     LENIENT_BASE64.decode(symbols).ok()
+}
+
+fn is_base64_symbol(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/')
+}
+
+/// Whether `line` has a space or a tab between two base64 symbols, as words do.
+fn has_space_between_symbols(line: &[u8]) -> bool {
+    let mut previous = None;
+    let mut after_blank = false;
+    for &byte in line {
+        if matches!(byte, b' ' | b'\t') {
+            after_blank = true;
+            continue;
+        }
+        if after_blank && previous.is_some_and(is_base64_symbol) && is_base64_symbol(byte) {
+            return true;
+        }
+        previous = Some(byte);
+        after_blank = false;
+    }
+    false
 }
 
 /// The text of a body part, decoded from base64 by [`recover_base64_contents`] where

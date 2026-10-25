@@ -878,9 +878,8 @@ Attachment body\r\n\
         assert!(plain.contains(children[0].result.content.trim()));
     }
 
-    /// The PDF in this fixture is base64 with a stray `>`. Against the unfixed code its
-    /// still-encoded text (`JVBERi0x…`) was sniffed as `text/plain` and came out as the
-    /// attachment's content.
+    /// The PDF in this fixture is base64 with a stray `>`. Its still-encoded text (`JVBERi0x…`)
+    /// must not come out as the attachment's content.
     #[cfg(feature = "tokio-runtime")]
     #[tokio::test]
     async fn test_async_email_does_not_extract_undecoded_base64_as_attachment_text() {

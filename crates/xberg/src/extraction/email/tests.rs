@@ -671,9 +671,8 @@ fn test_eml_attachment_details_metadata() {
     assert!(details.contains("application/pdf"), "Should contain mime type");
 }
 
-/// `mail-parser` stops decoding base64 at the first character outside its alphabet and keeps the
-/// encoded text. Against the unfixed code the body and the attachment below both came out as
-/// `SGVsbG8gQm9iLCB0aGUgZmln…>`.
+/// A body and an attachment whose base64 ends in a stray `>` are decoded. `mail-parser` stops at
+/// that character and keeps the encoded text.
 #[test]
 fn test_base64_with_a_stray_character_is_decoded() {
     // "Hello Bob, the figures are attached." with a `>` after the last symbol
@@ -704,7 +703,7 @@ fn test_base64_with_a_stray_character_is_decoded() {
 /// recovered from the message's raw bytes.
 #[test]
 fn test_utf16_base64_with_a_stray_character_is_decoded() {
-    // "Hi" in UTF-16LE is `SABpAA==`; the `>` stops mail-parser's decoder
+    // "Hi" in UTF-16LE is `SABpAA==`; the `>` stops mail-parser's decoder ~keep
     let body = "From: alice@example.com\r\nSubject: Hi\r\nMIME-Version: 1.0\r\n\
                 Content-Type: text/plain; charset=utf-16le\r\nContent-Transfer-Encoding: base64\r\n\r\n\
                 SA>BpAA==\r\n";
@@ -781,7 +780,85 @@ fn test_truncated_base64_attachment_is_decoded_as_far_as_it_goes() {
     let result = parse_eml_content(&eml_data).unwrap();
     let pdf = result.attachments[0].data.as_deref().expect("attachment data");
     assert!(pdf.starts_with(b"%PDF-1.3"), "got {:?}", &pdf[..pdf.len().min(16)]);
+    assert!(
+        pdf.windows(33)
+            .any(|window| window == b"/MediaBox [0 0 612.0000 792.0000]"),
+        "got {:?}",
+        String::from_utf8_lossy(pdf)
+    );
     assert_eq!(pdf.len(), 411);
+}
+
+fn single_part_eml(transfer_encoding: &str, body: &str) -> String {
+    format!(
+        "From: alice@example.com\r\nSubject: Figures\r\nMIME-Version: 1.0\r\n\
+         Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: {transfer_encoding}\r\n\r\n{body}"
+    )
+}
+
+/// A plain sentence in a part labelled base64 is not base64, so the body and the attachment keep
+/// the sentence.
+#[test]
+fn test_plain_text_labelled_base64_keeps_its_words() {
+    let sentence = "Hello Bob, the figures are attached.";
+    let result = parse_eml_content(single_part_eml("base64", &format!("{sentence}\r\n")).as_bytes()).unwrap();
+    assert_eq!(result.content.trim(), sentence);
+
+    let attachment = format!(
+        "From: alice@example.com\r\nSubject: Figures\r\nMIME-Version: 1.0\r\n\
+         Content-Type: multipart/mixed; boundary=\"BOUNDARY\"\r\n\r\n\
+         --BOUNDARY\r\nContent-Type: text/plain\r\n\r\nSee the note.\r\n\
+         --BOUNDARY\r\nContent-Type: text/plain; name=\"note.txt\"\r\n\
+         Content-Disposition: attachment; filename=\"note.txt\"\r\n\
+         Content-Transfer-Encoding: base64\r\n\r\n{sentence}\r\n--BOUNDARY--\r\n"
+    );
+    let result = parse_eml_content(attachment.as_bytes()).unwrap();
+    let note = result.attachments[0].data.as_deref().expect("attachment data");
+    assert_eq!(String::from_utf8_lossy(note).trim(), sentence);
+}
+
+/// Only a space between two symbols reads as words. A stray character next to a space does not.
+#[test]
+fn test_stray_characters_next_to_spaces_still_decode() {
+    let result = parse_eml_content(single_part_eml("base64", "SGVs >b> G8=\r\n").as_bytes()).unwrap();
+    assert_eq!(result.content.trim(), "Hello");
+}
+
+/// A quoted-printable part that `mail-parser` cannot decode keeps its text: only a part labelled
+/// base64 is decoded again.
+#[test]
+fn test_quoted_printable_with_a_decoding_problem_is_not_read_as_base64() {
+    let result = parse_eml_content(single_part_eml("quoted-printable", "if (a==b) return;\r\n").as_bytes()).unwrap();
+    assert_eq!(result.content.trim(), "if (a==b) return;");
+}
+
+/// RFC 2045 takes the first `=` as the end of the data, so the symbols after it are not decoded.
+#[test]
+fn test_recovered_base64_ends_at_the_first_padding_character() {
+    let result = parse_eml_content(single_part_eml("base64", "SGVs>bG8=\r\nV29ybGQ=\r\n").as_bytes()).unwrap();
+    assert_eq!(result.content.trim(), "Hello");
+}
+
+/// Base64 that is cut off after two symbols of a group still holds one whole byte there.
+#[test]
+fn test_base64_cut_off_inside_a_group_keeps_its_last_whole_byte() {
+    let result = parse_eml_content(single_part_eml("base64", "SGVsbG8gV2>\r\n").as_bytes()).unwrap();
+    assert_eq!(result.content.trim(), "Hello W");
+}
+
+/// Each text body is recovered from its own part.
+#[test]
+fn test_second_text_body_with_a_stray_character_is_decoded() {
+    let eml = "From: alice@example.com\r\nSubject: Figures\r\nMIME-Version: 1.0\r\n\
+               Content-Type: multipart/mixed; boundary=\"OUTER\"\r\n\r\n\
+               --OUTER\r\nContent-Type: text/plain\r\n\r\nIntro.\r\n\
+               --OUTER\r\nContent-Type: multipart/alternative; boundary=\"INNER\"\r\n\r\n\
+               --INNER\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n\
+               V29y>bGQ=\r\n\
+               --INNER\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>World</p>\r\n\
+               --INNER--\r\n--OUTER--\r\n";
+    let result = parse_eml_content(eml.as_bytes()).unwrap();
+    assert_eq!(result.plain_text.as_deref(), Some("Intro.\n\nWorld"));
 }
 
 #[test]
