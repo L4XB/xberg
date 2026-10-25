@@ -33,6 +33,7 @@ async fn should_read_a_page_in_the_charset_its_meta_declares() {
         r#"<meta charset="windows-1252">"#,
         r#"<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">"#,
         r#"<meta content="text/html; charset='windows-1252'" http-equiv="content-type">"#,
+        r#"<meta http-equiv="Content-Type" content="text/html; charset=windows-1252;x=1">"#,
     ] {
         let bytes = encoding_rs::WINDOWS_1252.encode(&page(head)).0.into_owned();
         let (content, warnings) = extract(&bytes).await;
@@ -49,6 +50,8 @@ async fn should_read_a_page_in_the_charset_its_meta_declares() {
 async fn should_skip_commented_out_and_unsupported_charset_declarations() {
     for head in [
         r#"<!-- <meta charset=shift_jis> --><meta charset="windows-1252">"#,
+        // A `>` inside a comment does not end it.
+        r#"<!-- a > <meta charset=shift_jis> --><meta charset="windows-1252">"#,
         // As in the HTML standard's prescan, `<!-->` is a whole comment.
         r#"<!--><meta charset="windows-1252">"#,
         r#"<meta charset="x-no-such-charset"><meta charset="windows-1252">"#,
@@ -70,6 +73,27 @@ async fn should_read_a_utf16_page_by_its_byte_order_mark() {
     let (content, _) = extract(&bytes).await;
 
     assert_eq!(content.trim(), TEXT);
+}
+
+// As in the prescan, a declared UTF-16 is read as UTF-8 and x-user-defined as windows-1252.
+#[tokio::test]
+async fn should_read_declared_utf16_as_utf8_and_x_user_defined_as_windows_1252() {
+    let text_bytes = encoding_rs::WINDOWS_1252.encode(TEXT).0;
+    let bytes = encoding_rs::WINDOWS_1252
+        .encode(&page(r#"<meta charset="utf-16">"#))
+        .0
+        .into_owned();
+    let (content, warnings) = extract(&bytes).await;
+    assert_eq!(content.trim(), String::from_utf8_lossy(&text_bytes));
+    assert_eq!(warnings, ["html"]);
+
+    let bytes = encoding_rs::WINDOWS_1252
+        .encode(&page(r#"<meta charset="x-user-defined">"#))
+        .0
+        .into_owned();
+    let (content, warnings) = extract(&bytes).await;
+    assert_eq!(content.trim(), TEXT);
+    assert!(warnings.is_empty(), "{warnings:?}");
 }
 
 #[tokio::test]
@@ -102,6 +126,8 @@ async fn should_find_charset_after_misleading_tags_and_attributes() {
 async fn should_prefer_direct_charset_in_either_attribute_order() {
     for head in [
         r#"<meta content="charset=shift_jis" http-equiv=content-type charset=windows-1252>"#,
+        // A direct charset needs no `http-equiv`, also after a `content` pragma.
+        r#"<meta content="charset=shift_jis" charset=windows-1252>"#,
         r#"<meta charset=windows-1252 http-equiv=content-type content="charset=shift_jis">"#,
         r#"<meta content="charset=shift_jis" charset=invalid http-equiv=content-type><meta charset=windows-1252>"#,
         r#"<meta charset=invalid content="charset=shift_jis" http-equiv=content-type><meta charset=windows-1252>"#,
