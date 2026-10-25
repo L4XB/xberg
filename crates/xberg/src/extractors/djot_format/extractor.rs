@@ -571,7 +571,9 @@ impl DjotExtractor {
                 Event::FootnoteReference(name) => {
                     // The holder is the block whose buffer takes the text around the
                     // reference, in the same order as the `Event::Str` arm.
-                    let holder = if in_table_cell {
+                    let holder = if in_table_caption {
+                        Some(FootnoteRefHolder::TableCaption)
+                    } else if in_table_cell {
                         Some(FootnoteRefHolder::Table)
                     } else if in_footnote {
                         None
@@ -596,8 +598,12 @@ impl DjotExtractor {
                     }
                 }
                 Event::Start(Container::Table, _) => {
+                    // A table without rows, such as a lone `|---|` line, is not pushed. Its caption is
+                    // dropped here so the next table does not take it, and the references in that
+                    // caption follow the block before. ~keep
                     table_rows.clear();
                     table_caption.clear();
+                    pending_footnote_refs.flush(&mut b, FootnoteRefHolder::TableCaption);
                 }
                 Event::Start(Container::Caption, _) => {
                     in_table_caption = true;
@@ -631,9 +637,10 @@ impl DjotExtractor {
                             RelationshipKind::Caption,
                         );
                     }
+                    pending_footnote_refs.flush(&mut b, FootnoteRefHolder::TableCaption);
                 }
                 Event::Str(s) => {
-                    // An image in a caption or cell keeps its alt text there and in its metadata.
+                    // An image in a caption or cell keeps its alt text there and in its metadata. ~keep
                     if in_image && (in_table_caption || in_table_cell) {
                         image_alt.push_str(s);
                     }
@@ -708,8 +715,8 @@ impl DjotExtractor {
 
 /// The characters jotdown's own HTML renderer writes for the events that stand for one: smart
 /// quotes, dashes, the ellipsis, a non-breaking space and a `:symbol:`. jotdown reports them as
-/// events of their own, between the `Str` events around them, so without this an apostrophe,
-/// a quote or a dash dropped out of the text (`Here's` came out as `Heres`).
+/// events of their own, between the `Str` events around them, so the text needs them to keep an
+/// apostrophe, a quote or a dash (`Here's`, not `Heres`). ~keep
 fn typographic_text<'s>(event: &Event<'s>) -> Option<std::borrow::Cow<'s, str>> {
     Some(match event {
         Event::LeftSingleQuote => "\u{2018}".into(),
@@ -1173,11 +1180,11 @@ mod tests {
         );
     }
 
-    /// jotdown reports smart quotes, dashes and the ellipsis as events of their own. Against the
-    /// unfixed code every one of them was dropped, so `Don't` came out as `Dont`.
+    /// Smart quotes, dashes, the ellipsis, a non-breaking space and a `:symbol:` keep their
+    /// characters in headings, paragraphs, list items and table cells.
     #[tokio::test]
     async fn should_keep_smart_punctuation_in_every_block_djot() {
-        let djot = b"# Don't panic\n\nIt's \"fine\" -- mostly... or---not.\n\n- Here's an item\n\n| Cell |\n|------|\n| Here's a cell |\n";
+        let djot = b"# Don't panic\n\nIt's \"fine\" -- mostly... or---not.\n\n'quoted' a\\ b :smile:\n\n- Here's an item\n\n| Cell |\n|------|\n| Here's a cell |\n";
         let doc = DjotExtractor::new()
             .extract_content(djot, "text/djot", &ExtractionConfig::default())
             .await
@@ -1187,6 +1194,7 @@ mod tests {
         for expected in [
             "Don\u{2019}t panic",
             "It\u{2019}s \u{201C}fine\u{201D} \u{2013} mostly\u{2026} or\u{2014}not.",
+            "\u{2018}quoted\u{2019} a\u{A0}b :smile:",
             "Here\u{2019}s an item",
         ] {
             assert!(texts.contains(&expected), "expected {expected:?} in {texts:?}");
@@ -1194,10 +1202,12 @@ mod tests {
         assert_eq!(doc.tables[0].cells[1], vec!["Here\u{2019}s a cell"]);
     }
 
-    /// A `^ caption` line under a table was dropped.
+    /// A `^ caption` line under a table becomes a paragraph right after the table, linked to it as
+    /// its caption.
     #[tokio::test]
     async fn should_attach_a_table_caption_to_its_table_djot() {
-        let djot = b"| Name | Age |\n|------|-----|\n| Alice | 30 |\n\n^ Ages of the _team_\nmembers.\n\nAfter.\n";
+        let djot =
+            b"Before.\n\n| Name | Age |\n|------|-----|\n| Alice | 30 |\n\n^ Ages of the _team_\nmembers.\n\nAfter.\n";
         let doc = DjotExtractor::new()
             .extract_content(djot, "text/djot", &ExtractionConfig::default())
             .await
@@ -1230,8 +1240,8 @@ mod tests {
         assert!(table_idx < caption_idx && caption_idx < after_idx);
     }
 
-    /// A hard line break ran its two lines together in table captions, list items, headings and
-    /// definitions.
+    /// A hard line break keeps its newline in table captions, list items, headings, definition terms
+    /// and definitions.
     #[tokio::test]
     async fn should_keep_hard_breaks_in_every_block_djot() {
         for djot in [
@@ -1239,6 +1249,7 @@ mod tests {
             &b"- first\\\n  second\n"[..],
             &b"# first\\\nsecond\n"[..],
             &b": term\n\n  first\\\n  second\n"[..],
+            &b": first\\\n  second\n\n  definition\n"[..],
         ] {
             let doc = DjotExtractor::new()
                 .extract_content(djot, "text/djot", &ExtractionConfig::default())
@@ -1254,7 +1265,8 @@ mod tests {
         }
     }
 
-    /// An image in a table caption or cell lost its alt text from the image element and its URI.
+    /// An image in a table caption or cell keeps its alt text as the image's text, as its URI label
+    /// and in the caption or cell text.
     #[tokio::test]
     async fn should_keep_image_alt_text_in_table_captions_and_cells_djot() {
         let djot = b"| Chart |\n|-------|\n| ![sales chart](chart.png) |\n\n^ Regions on the ![region map](map.png)\n";
@@ -1284,5 +1296,64 @@ mod tests {
             "caption text must keep the alt text, got {:?}",
             doc.elements
         );
+    }
+
+    /// A footnote reference in a caption follows the caption paragraph, after the table.
+    #[tokio::test]
+    async fn should_place_a_caption_footnote_reference_after_the_caption_djot() {
+        let djot = b"| a |\n\n^ Caption with note[^n]\n\n[^n]: the note\n";
+        let doc = DjotExtractor::new()
+            .extract_content(djot, "text/djot", &ExtractionConfig::default())
+            .await
+            .expect("djot table with a caption footnote should extract");
+
+        let position = |found: &dyn Fn(&crate::types::internal::InternalElement) -> bool| {
+            doc.elements
+                .iter()
+                .position(found)
+                .unwrap_or_else(|| panic!("element missing from {:?}", doc.elements))
+        };
+        let table_idx = position(&|e| matches!(e.kind, ElementKind::Table { .. }));
+        let caption_idx = position(&|e| e.text == "Caption with note");
+        let reference_idx = position(&|e| matches!(e.kind, ElementKind::FootnoteRef));
+        assert!(
+            table_idx < caption_idx && caption_idx + 1 == reference_idx,
+            "got {:?}",
+            doc.elements
+        );
+    }
+
+    /// A plain table gets no caption, and the caption of a table without rows does not go to the
+    /// next table. The reference in that caption stays before the next table.
+    #[tokio::test]
+    async fn should_give_a_caption_only_to_its_own_table_djot() {
+        for djot in [
+            &b"| a |\n"[..],
+            &b"|---|\n\n^ stale caption[^n]\n\n| a |\n\n[^n]: the note\n"[..],
+        ] {
+            let doc = DjotExtractor::new()
+                .extract_content(djot, "text/djot", &ExtractionConfig::default())
+                .await
+                .expect("djot table should extract");
+
+            assert!(
+                !doc.relationships.iter().any(|r| r.kind == RelationshipKind::Caption),
+                "{:?} got {:?}",
+                String::from_utf8_lossy(djot),
+                doc.relationships
+            );
+            let table_idx = doc
+                .elements
+                .iter()
+                .position(|e| matches!(e.kind, ElementKind::Table { .. }))
+                .expect("table element");
+            if let Some(reference_idx) = doc
+                .elements
+                .iter()
+                .position(|e| matches!(e.kind, ElementKind::FootnoteRef))
+            {
+                assert!(reference_idx < table_idx, "got {:?}", doc.elements);
+            }
+        }
     }
 }

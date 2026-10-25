@@ -64,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   jotdown's HTML renderer writes (`’`, `“`, `”`, `–`, `—`, `…`). The `^ caption` line of a table was dropped and
   is now a paragraph after the table, linked to it as its caption. A hard line break in a caption, list item,
   heading or definition no longer joins its two lines (`first\nsecond` read `firstsecond`), and an image in a
-  caption or table cell keeps its alt text as the image's text and URI label.
+  caption or table cell keeps its alt text as the image's text and URI label. A footnote reference in a caption
+  follows the caption instead of coming before the table. (#2224)
 - **(markdown): Keep bracketed link labels and image alt text in their original sentence position in plain output.**
   Link and image destinations remain available as URI metadata, and embedded image bytes are retained.
   Empty image labels no longer leave a doubled word gap. (#2233, #2235)
