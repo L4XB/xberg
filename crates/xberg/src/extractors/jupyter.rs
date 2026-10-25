@@ -1722,6 +1722,11 @@ mod tests {
                             "metadata": {}
                         },
                         {
+                            "output_type": "display_data",
+                            "data": {"text/plain": ["Loading:  10%\rLoading:  50%\rLoading: 100%"]},
+                            "metadata": {}
+                        },
+                        {
                             "output_type": "execute_result",
                             "execution_count": 1,
                             "data": {"text/plain": ["\u001b[32mok\u001b[39m"]},
@@ -1748,6 +1753,8 @@ mod tests {
                 "got: {text:?}"
             );
             assert!(text.contains("ok"), "got: {text:?}");
+            // Like a stream, the text after a carriage return overwrites the line: a progress bar keeps its last state.
+            assert!(text.contains("Loading: 100%") && !text.contains("10%"), "got: {text:?}");
         }
     }
 
@@ -2031,6 +2038,25 @@ mod tests {
             .expect("notebook preparation succeeds");
 
         assert_eq!(notebook["cells"][0]["source"], "Value: plain\n");
+    }
+
+    #[test]
+    fn should_drop_ansi_escapes_from_a_saved_eval_result() {
+        let mut notebook = json!({
+            "cells": [{
+                "cell_type": "markdown",
+                "source": "Value: {eval}`answer`",
+                "metadata": {"user_expressions": [{
+                    "expression": "answer",
+                    "result": {"status": "ok", "data": {"text/plain": "\u{1b}[32m42\u{1b}[39m"}}
+                }]}
+            }]
+        });
+
+        JupyterExtractor::prepare_notebook(&mut notebook, false, false, &mut test_budget())
+            .expect("notebook preparation succeeds");
+
+        assert_eq!(notebook["cells"][0]["source"], "Value: 42\n");
     }
 
     #[test]
