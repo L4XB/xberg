@@ -804,6 +804,10 @@ fn test_plain_text_labelled_base64_keeps_its_words() {
     let result = parse_eml_content(single_part_eml("base64", &format!("{sentence}\r\n")).as_bytes()).unwrap();
     assert_eq!(result.content.trim(), sentence);
 
+    let tabbed = "Hello\tBob,\tthe\tfigures\tare\tattached.";
+    let result = parse_eml_content(single_part_eml("base64", &format!("{tabbed}\r\n")).as_bytes()).unwrap();
+    assert_eq!(result.content.trim(), tabbed);
+
     let attachment = format!(
         "From: alice@example.com\r\nSubject: Figures\r\nMIME-Version: 1.0\r\n\
          Content-Type: multipart/mixed; boundary=\"BOUNDARY\"\r\n\r\n\
