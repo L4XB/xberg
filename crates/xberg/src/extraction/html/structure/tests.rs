@@ -742,6 +742,20 @@ fn should_keep_one_record_entry_for_many_heads_with_an_unclosed_title() {
 }
 
 #[test]
+fn should_raise_the_record_when_a_later_head_leaves_many_titles_open() {
+    let html = format!(
+        "<html><head><title>a</head><head>{}</head><body><p>end</p></body></html>",
+        "<title>x ".repeat(20_000)
+    );
+    tag_handlers::CLOSING_TAG_SEARCHES.with(|count| count.set(0));
+    let doc = build_document_structure(&html);
+    let text: String = doc.nodes.iter().filter_map(|node| node.content.text()).collect();
+    assert_eq!(text.matches('x').count(), 20_000);
+    // One search per head: the second head's first miss raises the record to its end ~keep
+    assert_eq!(tag_handlers::CLOSING_TAG_SEARCHES.with(|count| count.get()), 2);
+}
+
+#[test]
 fn should_find_the_end_of_the_head_once_for_many_heads() {
     let html = format!(
         "<html>{}</head><body><p>end</p></body></html>",
